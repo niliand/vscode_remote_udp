@@ -1,0 +1,58 @@
+{
+  "name": "udp-fs-provider",
+  "displayName": "UDP FS Provider",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "filesystemProviders": [
+      {
+        "scheme": "udpfs",
+        "displayName": "UDP Remote File System"
+      }
+    ],
+    "commands": [
+      {
+        "command": "udpfs.openFile",
+        "title": "Open UDP FS File"
+      },
+      {
+        "command": "udpfs.openRootFolder",
+        "title": "Open UDP FS Folder"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "UDP FS Configuration",
+      "properties": {
+        "udpfs.hostname": {
+          "type": "string",
+          "default": "localhost",
+          "description": "UDP FS server hostname"
+        },
+        "udpfs.key": {
+          "type": "string",
+          "default": null,
+          "description": "Encryption key (hex or base64)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p ./",
+    "compile": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^16.18.126",
+    "typescript": "^4.9.5",
+    "vscode": "^1.1.37"
+  },
+  "dependencies": {
+    "buffer-crc32": "^1.0.0"
+  }
+}

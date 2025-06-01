@@ -1,0 +1,6 @@
+.vscode
+vs_plugin/node_modules
+vs_plugin/out
+vs_plugin/package-lock.json
+vs_udp/a.out*
+vs_udp/server
