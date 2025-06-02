@@ -2,13 +2,13 @@
   "name": "udp-fs-provider",
   "displayName": "Remote - UDP FS Provider",
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "icon": "icon.png",
   "engines": {
     "vscode": "^1.100.0"
   },
   "activationEvents": [
-    "udpfs"
+    "onFileSystem:udpfs"
   ],
   "main": "./out/extension.js",
   "contributes": {
