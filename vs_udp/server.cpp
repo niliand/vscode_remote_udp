@@ -10,12 +10,13 @@
 #include <vector>
 #include <map>
 #include <sstream>
-
+#include <algorithm>
 #include <openssl/sha.h> // SHA256
 #include <openssl/evp.h>
 
 #include "types.hpp" // Include the types header for packet_hdr and enums
 #include "AESCipher.hpp"
+#include "config.hpp"
 
 namespace fs = std::filesystem;
 
@@ -110,10 +111,21 @@ int main()
     }
 
     std::string password = "default key";
+
+    auto config = parseConfigFile("config.txt");
+
+    const std::string lookupKey = "key";
+    if (config.find(lookupKey) != config.end()) {
+        password = config[lookupKey];
+        std::cout << "key was found\n";
+    } else {
+        std::cerr << "Key not found: \n";
+    }    
+
     // Hash the password using SHA256
     SHA256(reinterpret_cast<const unsigned char *>(password.data()), password.size(), key);
 
-    std::cout << "key: " << hex_dump(key, 32) << "\niv: " << hex_dump(iv, 16) << "\n";
+    //std::cout << "key: " << hex_dump(key, 32) << "\niv: " << hex_dump(iv, 16) << "\n";
     AESCipher cipher(key, iv);
 
     // Configure server address

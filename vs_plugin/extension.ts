@@ -93,10 +93,21 @@ export function activate(context: vscode.ExtensionContext) {
         );
     }
 
+    const configChangeDisposable = vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('udpfs')) {
+            // UDPFS settings were updated.
+            const config = vscode.workspace.getConfiguration('udpfs');
+
+            udpFs.updateConfig(config);
+        }
+    });
+
+    context.subscriptions.push(configChangeDisposable);
+
     //vscode.workspace.registerFileSearchProvider('udpfs', new UdpfsFileSearchProvider(udpFs));
 
     // context.subscriptions.push(
-    //     vscode.workspace.registerTextSearchProvider(scheme, textSearchProvider)
+         //vscode.workspace.registerTextSearchProvider(scheme, textSearchProvider)
     // );
 
     console.log('VS Code API version:', vscode.version);
@@ -142,7 +153,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly FIRST_DATA = 0x04;
 
     private iv = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex'); // 16-byte IV
-    private key: Buffer;
+    private key!: Buffer;
 
     private _reqId = 1;
 
@@ -160,11 +171,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
     constructor() {
         const config = vscode.workspace.getConfiguration('udpfs');
-        const hostname: string = config.get<string>('hostname') ?? 'localhost';
-        const password = config.get<string>('key') ?? 'default key';
-        this.key = crypto.createHash('sha256').update(password).digest(); // 32-byte key
-
-        this.SERVER_HOST = hostname;
+        this.updateConfig(config);
 
         //this.udpServer = dgram.createSocket('udp4');
         this.udpClient = dgram.createSocket('udp4');
@@ -179,6 +186,16 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         // });
 
         this.udpClient.on('message', this.onClientMessage);
+    }
+
+    public updateConfig(config : vscode.WorkspaceConfiguration) {
+        const hostname: string = config.get<string>('hostname') ?? 'localhost';
+        const password = config.get<string>('key') ?? 'default key';
+        this.key = crypto.createHash('sha256').update(password).digest(); // 32-byte key
+
+        this.SERVER_HOST = hostname;
+
+        console.log(`### hostname=${hostname}`);
     }
 
     private getReqId() {
@@ -212,7 +229,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         if (flags & this.ERROR_FLAG) {
             const packet = this.parsePacket(msg);
             const errorMessage = packet.payload.toString('utf8');
-            if (type !== this.FILE_INFO) {
+            if (type !== this.FILE_INFO && (type !== this.READ_FILE || !errorMessage.includes(".vscode"))) {
                 vscode.window.showErrorMessage(`UDP FS Error: ${errorMessage}`);
             }
 
