@@ -115,17 +115,20 @@ int main()
     auto config = parseConfigFile("config.txt");
 
     const std::string lookupKey = "key";
-    if (config.find(lookupKey) != config.end()) {
+    if (config.find(lookupKey) != config.end())
+    {
         password = config[lookupKey];
         std::cout << "key was found\n";
-    } else {
+    }
+    else
+    {
         std::cerr << "Key not found: \n";
-    }    
+    }
 
     // Hash the password using SHA256
     SHA256(reinterpret_cast<const unsigned char *>(password.data()), password.size(), key);
 
-    //std::cout << "key: " << hex_dump(key, 32) << "\niv: " << hex_dump(iv, 16) << "\n";
+    // std::cout << "key: " << hex_dump(key, 32) << "\niv: " << hex_dump(iv, 16) << "\n";
     AESCipher cipher(key, iv);
 
     // Configure server address
@@ -280,6 +283,24 @@ int main()
                 std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
                           { return a.seqNo < b.seqNo; });
 
+                uint16_t seq = 0;
+                bool ok = true;
+                for (const SessionData &packet : packets)
+                {
+                    if (packet.seqNo != seq)
+                    {
+                        std::cerr << "Seq No mismatch: " << file_path << ", " << packet.seqNo << " != " << seq << std::endl;
+                        reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't write file", cipher);
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (!ok)
+                {
+                    continue;
+                }
+
                 // open file for write and append, or create file
                 std::ofstream outFile;
                 outFile.open(file_path, std::ios::binary | std::ios::trunc);
@@ -290,7 +311,7 @@ int main()
                     continue;
                 }
 
-                uint16_t seq = 0;
+                seq = 0;
                 for (const SessionData &packet : packets)
                 {
                     if (packet.seqNo != seq)
@@ -387,7 +408,7 @@ int main()
             uint8_t *p = send_buffer + sizeof(packet_hdr) + 1;
             for (const auto &f : files)
             {
-                //std::cout << "File: " << f.name << ", type: " << f.type << "\n";
+                // std::cout << "File: " << f.name << ", type: " << f.type << "\n";
                 if ((packed + f.name.length() + 2) > maxSize)
                 {
                     // cannot pack next - send packet
