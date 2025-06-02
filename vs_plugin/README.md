@@ -8,6 +8,22 @@
 - Employs **AES encryption** for secure traffic  
 - Requires a custom **UDP server** running on the target machine
 
+### How to use extension
+- Edit your settings.json and add fields listed below (hostname and key)
+- Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
+- Find command "**Open UDP FS File**" or "**Open UDP FS Folder**"
+- Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
+
+#### How-to config VScode using settings.json ###
+Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settings (JSON)" and add following lines:
+~~~
+{
+  ...
+  "udpfs.hostname": "<your hostname here>",
+  "udpfs.key": "<your secret key here - must match the server's key>"
+}
+~~~
+
 ### Current restrictions
 
 - Max path limited to 254 symbols (fits the most cases)

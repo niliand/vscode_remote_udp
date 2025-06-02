@@ -19,6 +19,20 @@ cd vs_udp/
 make
 ~~~
 !! edit config.txt to define your own key string !!
+
+### Add firewall rule for UDP port 9022
+Ubuntu/Debian:
+~~~
+sudo ufw allow 9022/udp
+~~~
+
+RHEL/CentOS/Fedora:
+~~~
+sudo firewall-cmd --permanent --add-port=9022/udp
+sudo firewall-cmd --reload
+~~~
+
+Run server:
 ~~~
 ./server
 ~~~
@@ -27,17 +41,19 @@ Run it in tmux/screen session to make it persistent
 
 
 ## How-to config VScode using settings.json ###
+Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settings (JSON)" and add following lines:
 ~~~
 {
+  ...
   "udpfs.hostname": "<your hostname here>",
   "udpfs.key": "<your secret key here - must match the server's key>"
 }
 ~~~
 
 ## How to use extension
-- You can install extension using vsix file (e.g. vs_plugin/udp-fs-provider-0.0.1.vsix).
+- You can install extension using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
 - In VSCode select Extensions, Select ... at the top and Install from VSIX...
 - Edit your configuration file and add fields listed above (hostname and key)
 - Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
-- Find command "Open UDP FS File" or "Open UDP FS Folder"
+- Find command "**Open UDP FS File**" or "**Open UDP FS Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/

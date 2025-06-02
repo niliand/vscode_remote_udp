@@ -404,6 +404,7 @@ int main()
                                   (const struct sockaddr *)&client_addr, addr_len, cipher);
 
                     count = 0;
+                    packed = 1;
                 }
                 *p = f.type;
                 ++p;
