@@ -11,7 +11,9 @@ enum PacketType {
     LIST_FILES,
     FILE_INFO,
     CREATE_DIRECTORY,
-    RENAME_FILE
+    RENAME_FILE,
+    SEARCH_FILES,
+    SEARCH_TEXT
 };
 
 enum PacketFlags {
@@ -38,11 +40,6 @@ struct file_info {
     char mtime[20];       // Last modification time in ISO 8601 format
 } __attribute__((packed));
 
-struct list_info {
-    uint8_t type;
-    char name[33];
-
-} __attribute__((packed));
 
 #if 0
 class CRC32 {

@@ -4,3 +4,4 @@ vs_plugin/out
 vs_plugin/package-lock.json
 vs_udp/a.out*
 vs_udp/server
+vs_udp/server.dSYM/*

@@ -100,7 +100,7 @@ int main()
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
     uint8_t recv_buffer[1024];
-    //const char *uri_prefix = "udpfs://"; // Prefix for file URIs
+    // const char *uri_prefix = "udpfs://"; // Prefix for file URIs
 
     // Create UDP socket
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
@@ -176,7 +176,7 @@ int main()
         hdr->length = ntohs(hdr->length);
         hdr->seqNo = ntohs(hdr->seqNo);
 
-        std::cout << "Received packet: "
+        std::cout << "# Received packet: "
                   << "Version: " << static_cast<int>(hdr->version) << ", "
                   << "Type: " << static_cast<int>(hdr->type) << ", "
                   << "Flags: " << hdr->flags << ", "
@@ -185,7 +185,7 @@ int main()
 
         if (hdr->length > len - sizeof(packet_hdr))
         {
-            std::cerr << "Packet length exceeds received data size" << std::endl;
+            std::cerr << "Packet length " << hdr->length << " received more than data size" << std::endl;
             reply_error(sockfd, client_addr, addr_len, hdr->type, "Packet length exceeds received data size", cipher);
             continue; // Skip processing this packet
         }
@@ -206,7 +206,7 @@ int main()
             if (!file)
             {
                 std::cerr << "Error: Could not open file " << file_path << std::endl;
-                reply_error(sockfd, client_addr, addr_len, hdr->type, "File not found", cipher);
+                reply_error(sockfd, client_addr, addr_len, hdr->type, std::string(std::string("File not found: ") + file_path).c_str(), cipher);
                 continue; // Skip processing this packet
             }
 
@@ -221,7 +221,7 @@ int main()
             size_t file_size = buffer.size();
             size_t offset = 0;
             uint16_t seqNo = 0;
-            while (file_size > 0)
+            while (file_size >= 0)
             {
                 size_t chunk_size = std::min(file_size, static_cast<size_t>(sizeof(send_buffer) - sizeof(packet_hdr)));
                 send_hdr->length = htons(static_cast<uint16_t>(chunk_size));
@@ -244,6 +244,9 @@ int main()
                 file_size -= chunk_size;
                 offset += chunk_size;
                 std::cout << "File " << file_path << " sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
+
+                if (file_size == 0)
+                    break;
             }
         }
         else if (hdr->type == WRITE_FILE)
@@ -264,13 +267,6 @@ int main()
                 // Sort in ascending order by seqNo
                 std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
                           { return a.seqNo < b.seqNo; });
-
-                // std::cout << "write after: ";
-                // for (const SessionData &packet : packets)
-                // {
-                //     std::cout << packet.seqNo << ", ";
-                // }
-                // std::cout << "\n";
 
                 // open file for write and append, or create file
                 std::ofstream outFile;
@@ -312,7 +308,55 @@ int main()
         else if (hdr->type == DELETE_FILE)
         {
             std::cout << "Processing DELETE_FILE request for URI: " << hdr->uri << std::endl;
-            // Add logic to handle file deletion
+
+            try
+            {
+                if (!fs::exists(file_path))
+                {
+                    std::cerr << "Path does not exist.\n";
+                    reply_error(sockfd, client_addr, addr_len, hdr->type, "Path does not exist", cipher);
+                    continue; // Skip processing this packet
+                }
+
+                if (fs::is_regular_file(file_path))
+                {
+                    if (std::filesystem::remove(file_path))
+                    {
+                        std::cout << "File " << file_path << " deleted successfully.\n";
+                    }
+                    else
+                    {
+                        std::cout << "Failed to delete the file: " << file_path << "\n";
+                        reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't delete file", cipher);
+                        continue;
+                    }
+                }
+                else if (fs::is_directory(file_path))
+                {
+                    if (std::filesystem::remove_all(file_path))
+                    {
+                        std::cout << "Directory " << file_path << " deleted successfully.\n";
+                    }
+                    else
+                    {
+                        std::cout << "Failed to delete the directory: " << file_path << "\n";
+                        reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't delete directory", cipher);
+                        continue;
+                    }
+                }
+            }
+            catch (const std::filesystem::filesystem_error &e)
+            {
+                std::cerr << "Filesystem error: " << e.what() << '\n';
+                reply_error(sockfd, client_addr, addr_len, hdr->type, "Error during deleting", cipher);
+                continue;
+            }
+
+            send_hdr->flags = 0;
+            send_hdr->length = 0;
+
+            crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(file_info), 0,
+                          (const struct sockaddr *)&client_addr, addr_len, cipher);
         }
         else if (hdr->type == LIST_FILES)
         {
@@ -321,44 +365,60 @@ int main()
 
             send_hdr->flags = 0;
 
+            // packet files in format: items num (byte), file type (byte), name length (byte), name bytes
+
             size_t count = 0; // inside one packet
             size_t added = 0; // total
             uint16_t seqNo = 0;
+            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
+            size_t packed = 1; // first byte is num of entries
+            uint8_t *p = send_buffer + sizeof(packet_hdr) + 1;
             for (const auto &f : files)
             {
-                std::cout << "File: " << f.name << ", type: " << f.type << "\n";
-                list_info *info = reinterpret_cast<list_info *>(send_buffer + sizeof(packet_hdr) + sizeof(list_info) * count);
-                info->type = f.type;
-                memcpy(info->name, f.name.c_str(), std::min(f.name.length(), sizeof(info->name) - 1));
-                info->name[std::min(f.name.length(), sizeof(info->name) - 1)] = 0;
-
-                ++count;
-                ++added;
-
-                if (count == 20)
+                //std::cout << "File: " << f.name << ", type: " << f.type << "\n";
+                if ((packed + f.name.length() + 2) > maxSize)
                 {
-                    send_hdr->length = htons(sizeof(list_info) * count);
+                    // cannot pack next - send packet
+                    p = send_buffer + sizeof(packet_hdr);
+                    *p = count;
+                    ++p;
+                    send_hdr->length = htons(packed + 1);
                     send_hdr->seqNo = htons(seqNo++);
                     if (added == files.size())
                     {
                         send_hdr->flags = htons(PacketFlags::LAST_DATA);
                     }
-                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(list_info) * count, 0,
+                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
                                   (const struct sockaddr *)&client_addr, addr_len, cipher);
 
                     count = 0;
                 }
+                *p = f.type;
+                ++p;
+                *p = f.name.length();
+                ++p;
+                memcpy(p, f.name.c_str(), f.name.length());
+                p += f.name.length();
+                packed += (2 + f.name.length());
+
+                ++count;
+                ++added;
             }
 
             if (count > 0)
             {
                 // send rest
-                send_hdr->length = htons(sizeof(list_info) * count);
+
+                // set count:
+                p = send_buffer + sizeof(packet_hdr);
+                *p = count;
+
+                send_hdr->length = htons(packed + 1);
                 send_hdr->flags = htons(PacketFlags::LAST_DATA);
                 send_hdr->seqNo = htons(seqNo++);
-                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(list_info) * count, 0,
+                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
                               (const struct sockaddr *)&client_addr, addr_len, cipher);
-                std::cout << "Sent last: count=" << count << ", len=" << ntohs(send_hdr->length) << ", flags=" << ntohs(send_hdr->flags) << "\n";
+                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
             }
         }
         else if (hdr->type == FILE_INFO)
@@ -430,6 +490,35 @@ int main()
                 std::cerr << "Can't create directory: " << file_path << '\n';
                 reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't create directory", cipher);
             }
+        }
+        else if (hdr->type == PacketType::RENAME_FILE)
+        {
+            char newName[255] = {0};
+            try
+            {
+
+                memcpy(newName, recv_buffer + sizeof(packet_hdr), hdr->length);
+                if (!fs::exists(file_path))
+                {
+                    std::cerr << "Path does not exist.\n";
+                    reply_error(sockfd, client_addr, addr_len, hdr->type, "Path does not exist", cipher);
+                    continue; // Skip processing this packet
+                }
+
+                std::filesystem::rename(file_path, newName);
+            }
+            catch (const std::filesystem::filesystem_error &e)
+            {
+                std::cerr << "Filesystem error on rename from " << file_path << " to " << newName << ": " << e.what() << '\n';
+                reply_error(sockfd, client_addr, addr_len, hdr->type, "Error during renaming", cipher);
+                continue;
+            }
+
+            send_hdr->flags = 0;
+            send_hdr->length = 0;
+
+            crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(file_info), 0,
+                          (const struct sockaddr *)&client_addr, addr_len, cipher);
         }
         else
         {

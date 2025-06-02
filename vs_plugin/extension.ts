@@ -9,11 +9,12 @@ type PendingRequest = {
     type: 'void' | 'buffer'; // or use custom request types
 };
 
-interface MultiReqData
-{
+interface MultiReqData {
     seqNo: number;
     buffer: Buffer
 };
+
+const FAVORITES_KEY = 'udpfs.favorites';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('UDP File System Provider is now active!');
@@ -64,6 +65,13 @@ export function activate(context: vscode.ExtensionContext) {
                 if (!uri) return;
 
                 //await vscode.commands.executeCommand("vscode.openFolder", uri);
+                const currentFavorites = context.globalState.get<string[]>(FAVORITES_KEY, []);
+                if (!currentFavorites.includes(uri.toString())) {
+                    await context.globalState.update(FAVORITES_KEY, [...currentFavorites, uri.toString()]);
+                    //vscode.window.showInformationMessage(`Added favorite: ${uri.toString()}`);
+                } else {
+                    //vscode.window.showInformationMessage(`URI already in favorites`);
+                }
 
                 vscode.workspace.updateWorkspaceFolders(0, 0, {
                     uri,
@@ -75,15 +83,31 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    const savedFavorites = context.globalState.get<string[]>(FAVORITES_KEY, []);
+    for (const uriString of savedFavorites) {
+        const uri = vscode.Uri.parse(uriString);
+        vscode.workspace.updateWorkspaceFolders(
+            vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders.length : 0,
+            0,
+            { uri, name: uri.authority }
+        );
+    }
+
+    //vscode.workspace.registerFileSearchProvider('udpfs', new UdpfsFileSearchProvider(udpFs));
+
+    // context.subscriptions.push(
+    //     vscode.workspace.registerTextSearchProvider(scheme, textSearchProvider)
+    // );
+
+    console.log('VS Code API version:', vscode.version);
 
     // Add button to status bar
-    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-    statusBarItem.text = '📁 Open UDP FS';
-    statusBarItem.command = 'udpfs.openRootFolder';
-    statusBarItem.tooltip = 'Open UDP File System Root Folder';
-    statusBarItem.show();
-
-    context.subscriptions.push(statusBarItem);
+    // const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+    // statusBarItem.text = '📁 Open UDP FS';
+    // statusBarItem.command = 'udpfs.openRootFolder';
+    // statusBarItem.tooltip = 'Open UDP File System Root Folder';
+    // statusBarItem.show();
+    // context.subscriptions.push(statusBarItem);
 }
 
 export function deactivate() {
@@ -105,6 +129,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly FILE_INFO = 4;
     private readonly CREATE_DIRECTORY = 5;
     private readonly RENAME_FILE = 6;
+    private readonly SEARCH_FILES = 7;
+    private readonly SEARCH_TEXT = 8;
 
     private readonly SERVER_PORT = 9022;
     private SERVER_HOST = '127.0.0.1';
@@ -137,10 +163,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const hostname: string = config.get<string>('hostname') ?? 'localhost';
         const password = config.get<string>('key') ?? 'default key';
         this.key = crypto.createHash('sha256').update(password).digest(); // 32-byte key
-
-        console.log(`password: [${password}]`);
-        console.log('key: ', this.key);
-        console.log('iv: ', this.iv);
 
         this.SERVER_HOST = hostname;
 
@@ -190,7 +212,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         if (flags & this.ERROR_FLAG) {
             const packet = this.parsePacket(msg);
             const errorMessage = packet.payload.toString('utf8');
-            vscode.window.showErrorMessage(`UDP Error: ${errorMessage}`);
+            if (type !== this.FILE_INFO) {
+                vscode.window.showErrorMessage(`UDP FS Error: ${errorMessage}`);
+            }
 
             const pending = this.pendingRequests.get(reqId);
             if (pending) {
@@ -201,14 +225,14 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         }
 
-        if (type === this.READ_FILE || type === this.LIST_FILES) {
+        if (type === this.READ_FILE || type === this.LIST_FILES || type === this.SEARCH_FILES || type === this.SEARCH_TEXT) {
             const pending = this.pendingMulti.get(reqId);
             const packet = this.parsePacket(msg);
             if (pending) {
-                pending.chunks.push({seqNo:packet.seqNo, buffer: packet.payload});
+                pending.chunks.push({ seqNo: packet.seqNo, buffer: packet.payload });
 
                 if (packet.flags & this.END_OF_TRANSMISSION_FLAG) { // LAST_PACKET flag
-                    console.log('Last packet type: ', type);
+                    console.log('Last packet for type: ', type);
                     this.pendingMulti.delete(reqId);
                     pending.resolve(pending.chunks);
                 }
@@ -273,30 +297,57 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         console.log('readDirectory called for', uri.toString());
         // TODO: Request directory listing over UDP
         return this.sendRequestReadDir(uri).then(chunks => {
-            console.log('sendRequestReadDir resolve: num chunks:', chunks.length);
+
+            console.log('readDirectory num packets: ', chunks.length);
+
             const itemSize = 34; // list_info size
             const items: [name: string, type: vscode.FileType][] = [];
 
             let seqNo = 0;
             chunks.sort((a, b) => a.seqNo - b.seqNo);
             for (const chunk of chunks) {
+                console.log('chunk seqNo', seqNo);
                 //const numFiles = packet.length / itemSize;
                 if (chunk.seqNo != seqNo) {
                     console.error(`Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
                     throw vscode.FileSystemError.Unavailable(`Unable to read directory: ${uri.toString()}`);
                 }
                 seqNo = seqNo + 1;
-                
 
-                for (let offset = 0; (offset + itemSize) <= chunk.buffer.length; offset += itemSize) {
-                    const type = chunk.buffer.readUInt8(offset);
-                    const nameBuf = chunk.buffer.slice(offset + 1, offset + 33);
-                    const name = nameBuf.toString('utf8').replace(/\0.*$/, ''); // Remove null terminator and trailing nulls
+                let offset = 0;
+                const totalItems = chunk.buffer.readUInt8(offset);
+                console.log('chunk totalItems', totalItems);
+                offset += 1;
 
-                    console.log(`file: ${name}, type: ${type}`);
+                for (let i = 0; i < totalItems; i++) {
+                    if (offset + 2 > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading item header");
+                    }
 
-                    items.push([name, type]);
+                    const fileType = chunk.buffer.readUInt8(offset);
+                    offset += 1;
+
+                    const nameLen = chunk.buffer.readUInt8(offset);
+                    offset += 1;
+
+                    if (offset + nameLen > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading filename");
+                    }
+
+                    const name: string = chunk.buffer.toString("utf8", offset, offset + nameLen);
+                    offset += nameLen;
+
+                    items.push([name, fileType]);
                 }
+
+                // for (let offset = 0; (offset + itemSize) <= chunk.buffer.length; offset += itemSize) {
+                //     const type = chunk.buffer.readUInt8(offset);
+                //     const nameBuf = chunk.buffer.slice(offset + 1, offset + 33);
+                //     const name = this.bufferToNullTerminatedString(nameBuf);
+                //     //const name = nameBuf.toString('utf8').replace(/\0.*$/, ''); // Remove null terminator and trailing nulls
+
+                //     items.push([name, type]);
+                // }
             }
 
             return items;
@@ -307,7 +358,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     createDirectory(uri: vscode.Uri): void | Thenable<void> {
         console.log('createDirectory called for', uri.toString());
         return this.sendCreateDirectoryReq(uri).then(() => {
-            
+
         }).catch((err) => {
             console.error('createDirectory failed: ', (err as Error).message);
             //throw err; // Re-throw to propagate error to caller
@@ -351,6 +402,25 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         let seqNo = 0;
 
         const packets: Buffer[] = [];
+
+        if (options.create && !content.length) {
+            let flags = 0;
+            flags += this.END_OF_TRANSMISSION_FLAG;
+
+            flags += this.FIRST_DATA;
+
+            // Create the header
+            const header = Buffer.alloc(this.HEADER_SIZE);
+            header.writeUInt8(version, 0);                    // version
+            header.writeUInt8(type, 1);                       // type
+            header.writeUInt16BE(flags, 2);                   // flags
+            uriBuf.copy(header, 4);                           // uri (255 bytes)
+            header.writeUInt16BE(0, 259);                // payload length
+            header.writeUInt16BE(reqId, 261);
+            header.writeUInt16BE(seqNo, 263);
+
+            packets.push(header);
+        }
 
         for (let offset = 0; offset < content.length; offset += MAX_PAYLOAD_SIZE) {
             const isLast = offset + MAX_PAYLOAD_SIZE >= content.length;
@@ -415,12 +485,36 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
     delete(uri: vscode.Uri, options: { recursive: boolean; }): void | Thenable<void> {
         console.log('delete called for', uri.toString());
-        // TODO: Send delete command over UDP
+        return this.sendDeleteReq(uri).then(() => {
+
+        }).catch((err) => {
+            console.error('createDirectory failed: ', (err as Error).message);
+            //throw err; // Re-throw to propagate error to caller
+            throw vscode.FileSystemError.Unavailable(uri);
+        });
     }
 
     rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean; }): void | Thenable<void> {
         console.log('rename called for', oldUri.toString(), newUri.toString());
-        // TODO: Send rename command over UDP
+        return this.sendRenameReq(oldUri, newUri).then(() => {
+
+        }).catch((err) => {
+            console.error('Rename failed: ', (err as Error).message);
+            //throw err; // Re-throw to propagate error to caller
+            throw vscode.FileSystemError.Unavailable(newUri);
+        });
+    }
+
+    private bufferToNullTerminatedString(buffer: Buffer, encoding: BufferEncoding = 'utf8'): string {
+        const nullTerminatorIndex = buffer.indexOf(0);
+
+        if (nullTerminatorIndex === -1) {
+            // If no null terminator is found, treat the entire buffer as the string
+            return buffer.toString(encoding);
+        } else {
+            // Decode the buffer up to the null terminator
+            return buffer.subarray(0, nullTerminatorIndex).toString(encoding);
+        }
     }
 
     parsePacket(buffer: Buffer) {
@@ -436,13 +530,13 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const seqNo = buffer.readUInt16BE(263);
         const payload = buffer.slice(this.HEADER_SIZE, this.HEADER_SIZE + length);
 
-        console.log(`Parsed packet, size: ${buffer.length}, type=${type}, flags=${flags}, reqId=${reqId}, length=${length}`);
+        //console.log(`Parsed packet, size: ${buffer.length}, type=${type}, flags=${flags}, reqId=${reqId}, length=${length}`);
 
         return { version, type, flags, uri, length, reqId, seqNo, payload };
     }
 
     parseFileInfo(buffer: Buffer) {
-        console.log('Parsing file info packet of size:', buffer.length);
+        //console.log('Parsing file info packet of size:', buffer.length);
         if (buffer.length < 45) throw new Error("Buffer too small for file_info: " + buffer.length + " bytes, expected at least 45 bytes");
 
         const size = buffer.readUInt32BE(0);
@@ -529,8 +623,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
 
         const reqId = this.getReqId();
-
-        console.log('sendRequestReadDir reqId=', reqId);
 
         // Fill header fields
         let offset = 0;
@@ -664,4 +756,226 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
+    private sendDeleteReq(uri: vscode.Uri): Promise<void> {
+
+        return new Promise((resolve, reject) => {
+            const reqId = this.getReqId();
+            this.pendingRequests.set(reqId, {
+                resolve,
+                reject,
+                type: 'void',
+            });
+
+            // Send the initial request
+            const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
+
+            // Fill header fields
+            let offset = 0;
+            buffer.writeUInt8(this.version, offset++);            // version
+            buffer.writeUInt8(this.DELETE_FILE, offset++);               // type
+            buffer.writeUInt16BE(0, offset); offset += 2; // flags (big-endian)
+
+            // Write URI string into buffer
+            const uriStr = uri.path; // or uri.fsPath
+            const uriBytes = Buffer.from(uriStr, 'utf8');
+            if (uriBytes.length > 255) throw new Error("URI too long");
+            uriBytes.copy(buffer, offset);
+            offset += 255; // move past URI (rest will be zero-padded automatically)
+
+            // Write length (can be updated to include payload later)
+            buffer.writeUInt16BE(0, offset); offset += 2;
+            buffer.writeUInt16BE(reqId, offset); offset += 2;
+
+            // Send packet
+            this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+            });
+
+            setTimeout(() => {
+                this.pendingRequests.delete(reqId);
+                reject(new Error('UDP request timed out'));
+            }, 3000);
+
+        });
+    }
+
+    private sendRenameReq(uriOld: vscode.Uri, uriNew: vscode.Uri): Promise<void> {
+
+        return new Promise((resolve, reject) => {
+            const reqId = this.getReqId();
+            this.pendingRequests.set(reqId, {
+                resolve,
+                reject,
+                type: 'void',
+            });
+
+            // Send the initial request
+            const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
+
+            // Fill header fields
+            let offset = 0;
+            buffer.writeUInt8(this.version, offset++);            // version
+            buffer.writeUInt8(this.RENAME_FILE, offset++);               // type
+            buffer.writeUInt16BE(0, offset); offset += 2; // flags (big-endian)
+
+            // Write URI string into buffer
+            const uriStr = uriOld.path; // or uri.fsPath
+            const uriBytes = Buffer.from(uriStr, 'utf8');
+            if (uriBytes.length > 255) throw new Error("URI too long");
+            uriBytes.copy(buffer, offset);
+            offset += 255; // move past URI (rest will be zero-padded automatically)
+
+            const uriStrNew = uriNew.path; // or uri.fsPath
+            const uriBytesNew = Buffer.from(uriStrNew, 'utf8');
+
+            // Write length (can be updated to include payload later)
+            buffer.writeUInt16BE(uriBytesNew.length, offset); offset += 2;
+            buffer.writeUInt16BE(reqId, offset); offset += 2;
+            buffer.writeUInt16BE(0, offset); offset += 2;  // seq no
+
+            const packet = Buffer.concat([buffer, uriBytesNew]);    // full packet
+
+            // Send packet
+            this.udpClient.send(this.encrypt(packet), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+            });
+
+            setTimeout(() => {
+                this.pendingRequests.delete(reqId);
+                reject(new Error('UDP request timed out'));
+            }, 3000);
+
+        });
+    }
+
+    public sendSearchFilesReq(uriDir: vscode.Uri, pattern: string): Promise<MultiReqData[]> {
+        const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
+
+        const reqId = this.getReqId();
+
+        // Fill header fields
+        let offset = 0;
+        buffer.writeUInt8(this.version, offset++);            // version
+        buffer.writeUInt8(this.SEARCH_FILES, offset++);               // type
+        buffer.writeUInt16BE(0, offset); offset += 2; // flags (big-endian)
+
+        // Write URI string into buffer
+        const uriStr = uriDir.path; // or uri.fsPath
+        const uriBytes = Buffer.from(uriStr, 'utf8');
+        if (uriBytes.length > 255) throw new Error("URI too long");
+        uriBytes.copy(buffer, offset);
+        offset += 255; // move past URI (rest will be zero-padded automatically)
+
+        const patternBytes = Buffer.from(pattern, 'utf8');
+
+        // Write length (can be updated to include payload later)
+        buffer.writeUInt16BE(patternBytes.length, offset); offset += 2;
+        buffer.writeUInt16BE(reqId, offset); offset += 2;
+        buffer.writeUInt16BE(0, offset); offset += 2;  // seq no
+        patternBytes.copy(buffer, offset);
+
+        return new Promise((resolve, reject) => {
+
+            this.pendingMulti.set(reqId, {
+                resolve,
+                reject,
+                chunks: []
+            });
+
+            // Send packet
+            this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+            });
+
+            setTimeout(() => {
+                if (this.pendingMulti.has(reqId)) {
+                    this.pendingMulti.delete(reqId);
+                    reject(new Error('UDP search files timeout'));
+                }
+            }, 5000);
+        });
+    }
+
+
+
+
+} //UdpFileSystemProvider
+
+//
+// File search
+//
+interface FileSearchQuery {
+    pattern: string;
 }
+
+interface FileSearchOptions {
+    folder: vscode.Uri;
+    includes?: string[];
+    excludes: string[];
+    useIgnoreFiles: boolean;
+    useGlobalIgnoreFiles: boolean;
+    followSymlinks: boolean;
+    maxResults?: number;
+}
+
+class UdpfsFileSearchProvider {
+    constructor(private fs: UdpFileSystemProvider) { }
+
+    async provideFileSearchResults(
+        query: FileSearchQuery,
+        options: FileSearchOptions,
+        _token: vscode.CancellationToken
+    ): Promise<vscode.Uri[]> {
+
+        return this.fs.sendSearchFilesReq(options.folder, query.pattern).then(chunks => {
+
+            const itemSize = 34; // list_info size
+            const items: vscode.Uri[] = [];
+
+            let seqNo = 0;
+            chunks.sort((a, b) => a.seqNo - b.seqNo);
+            for (const chunk of chunks) {
+                //const numFiles = packet.length / itemSize;
+                if (chunk.seqNo != seqNo) {
+                    console.error(`Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
+                    throw vscode.FileSystemError.Unavailable(`Unable to search directory: ${options.folder.toString()}`);
+                }
+                seqNo = seqNo + 1;
+
+                let offset = 0;
+                const totalItems = chunk.buffer.readUInt8(offset);
+                offset += 1;
+
+                for (let i = 0; i < totalItems; i++) {
+                    if (offset + 2 > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading item header");
+                    }
+
+                    const fileType = chunk.buffer.readUInt8(offset);
+                    offset += 1;
+
+                    const nameLen = chunk.buffer.readUInt8(offset);
+                    offset += 1;
+
+                    if (offset + nameLen > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading filename");
+                    }
+
+                    const name: string = chunk.buffer.toString("utf8", offset, offset + nameLen);
+                    offset += nameLen;
+
+                    items.push(vscode.Uri.file(name));
+                }
+            }
+
+            return items;
+        });
+    }
+}
+
