@@ -1,7 +1,9 @@
 {
   "name": "udp-fs-provider",
-  "displayName": "UDP FS Provider",
-  "version": "0.0.2",
+  "displayName": "Remote - UDP FS Provider",
+  "description": "Open any folder on a remote machine using UDP based filesystem provider",
+  "version": "0.0.3",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.100.0"
   },
