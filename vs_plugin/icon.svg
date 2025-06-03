@@ -1,0 +1,8 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Enlarged folder outline -->
+  <path d="M4 12h55l8 8h57v78H4z" fill="none" stroke="currentColor" stroke-width="7"/>
+
+  <!-- Large "UDP" text, shifted right to avoid border -->
+  <text x="64" y="75" font-size="50" font-family="sans-serif" text-anchor="middle" fill="currentColor">UDP</text>
+</svg>
+

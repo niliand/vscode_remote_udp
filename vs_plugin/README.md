@@ -11,10 +11,11 @@
 
 ### How to use extension
 - Edit your settings.json and add fields listed below (hostname and key)
-- Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
+- Find and click UDPFS icon at left panel
+- Or use Command Palette (Ctrl+P or Ctrl+Cmd+P)
 - Find command "**UDP FS: Open File**" or "**OUDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
-- The "**UDP FS: Search Text in Files**" command helps you find text within files or locate files by name in an opened folder. To search only for file names, simply leave the search text field blank.
+- The "**UDP FS: Search Text in Files**" command helps you find text within files. To search only for file names, simply leave the search text field blank.
 - NOTE: Add search excludes to skip search in unrelated folders. In Command Palette find "Preferences: Open User Settings (JSON)" and add exludes like:
 ~~~
     "search.exclude": {

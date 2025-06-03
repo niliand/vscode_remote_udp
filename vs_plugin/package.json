@@ -2,7 +2,7 @@
   "name": "udp-fs-provider",
   "displayName": "Remote - UDP FS Provider",
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "icon": "icon.png",
   "license": "MIT",
   "engines": {
@@ -16,6 +16,8 @@
     "filesystemProviders": [
       {
         "scheme": "udpfs",
+        "remote": true,
+        "isCaseSensitive": true,
         "displayName": "UDP Remote File System"
       }
     ],
@@ -54,6 +56,24 @@
         {
           "scheme": "udpfs",
           "label": "UDPFS"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "udpfsSidebar",
+          "title": "UDPFS",
+          "icon": "icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "udpfsSidebar": [
+        {
+          "type": "webview",
+          "id": "udpfsSearchView",
+          "name": "Search Files"
         }
       ]
     }

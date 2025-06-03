@@ -134,6 +134,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(configChangeDisposable);
 
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            'udpfsSearchView',
+            new UDPFSSearchViewProvider(context, udpFs)
+        )
+    );
+
     //vscode.workspace.registerFileSearchProvider('udpfs', new UdpfsFileSearchProvider(udpFs));
 
     // context.subscriptions.push(
@@ -955,7 +962,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         let excBuffer = Buffer.concat(buffers);
         excBuffer = Buffer.concat([excBuffer, Buffer.alloc(1, 0)]);
-        
+
         const packet = Buffer.concat([packetTmp, excBuffer]);
 
         return new Promise((resolve, reject) => {
@@ -1130,4 +1137,126 @@ function escapeHtml(text: string): string {
         '"': '&quot;',
         "'": '&#39;'
     }[m]!));
+}
+
+class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
+    constructor(private context: vscode.ExtensionContext, private udpFs: UdpFileSystemProvider) { }
+
+    resolveWebviewView(
+        webviewView: vscode.WebviewView,
+        _context: vscode.WebviewViewResolveContext,
+        _token: vscode.CancellationToken
+    ) {
+        webviewView.webview.options = {
+            enableScripts: true
+        };
+
+        webviewView.webview.html = this.getHtml(webviewView.webview);
+
+        webviewView.webview.onDidReceiveMessage(message => {
+            if (message.command === 'startSearch') {
+                const { searchText, fileMask } = message;
+
+                if (!fileMask) {
+                    vscode.window.showErrorMessage(`File mask is empty.`);
+                    return;
+                }
+
+                vscode.window.showInformationMessage(`Searching for: ${searchText} in ${fileMask}`);
+
+                this.startSearch(searchText, fileMask)
+            } else if (message.command === 'openFolder') {
+                void vscode.commands.executeCommand('udpfs.openRootFolder', ...(message.args || []));
+             }
+        });
+    }
+
+    private startSearch(searchText: string, fileMask: string) {
+        // Fire-and-forget async call
+        void this.doSearch(searchText, fileMask);
+    }
+
+    private async doSearch(searchText: string, fileMask: string) {
+        try {
+            const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask);
+            showSearchResultsInWebview(results, searchText ?? '');
+        } catch (err) {
+            console.error('Search error:', err);
+        }
+    }
+
+    private getHtml(webview: vscode.Webview): string {
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      background-color: var(--vscode-sideBar-background);
+      color: var(--vscode-foreground);
+      font-family: var(--vscode-font-family);
+      padding: 8px;
+    }
+
+    input {
+      background-color: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border);
+      padding: 4px;
+      margin-bottom: 8px;
+      width: 100%;
+    }
+
+    button {
+      background-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      padding: 6px;
+      width: 100%;
+      cursor: pointer;
+    }
+
+    hr {
+       background-color: var(--vscode-input-background);
+    }
+
+    button:hover {
+      background-color: var(--vscode-button-hoverBackground);
+    }
+  </style>
+</head>
+<body>
+  <button onclick="openFolder()">Open folder</button>
+  <br> <br><hr> <br>
+  <input id="searchText" placeholder="Search text" />
+  <input id="fileMask" placeholder="File mask (e.g. *.ts)" />
+  <button onclick="startSearch()">Search text</button>
+
+  <br> <br><hr> <br>
+  <input id="fileMask2" placeholder="File mask (e.g. user*)" />
+  <button onclick="startSearchFiles()">Search filenames</button>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+
+    function openFolder() {
+       vscode.postMessage({ command: 'openFolder' });
+    }
+
+    function startSearch() {
+      const searchText = document.getElementById('searchText').value;
+      const fileMask = document.getElementById('fileMask').value;
+      vscode.postMessage({ command: 'startSearch', searchText, fileMask });
+    }
+    function startSearchFiles() {
+      const searchText = '';
+      const fileMask = document.getElementById('fileMask2').value;
+      vscode.postMessage({ command: 'startSearch', searchText, fileMask });
+    }
+
+  </script>
+</body>
+</html>
+    `;
+    }
 }
