@@ -969,15 +969,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         return this.sendSearchFilesReq(pattern, mask).then(chunks => {
             const items: SearchResult[] = [];
 
-            let seqNo = 0;
-            chunks.sort((a, b) => a.seqNo - b.seqNo);
+            // no need to sort search result
+            //chunks.sort((a, b) => a.seqNo - b.seqNo);
             for (const chunk of chunks) {
-                if (chunk.seqNo != seqNo) {
-                    console.error(`Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
-                    throw vscode.FileSystemError.Unavailable(`Unable to search directory`);
-                }
-                seqNo = seqNo + 1;
-
                 // total(1), path_len (1), path (1..255), line no (2), line_len (1), line (1..255) 
                 let offset = 0;
                 const totalItems = chunk.buffer.readUInt8(offset);
