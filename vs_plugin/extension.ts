@@ -162,6 +162,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
     private readonly version = 1; // Protocol version
     private readonly HEADER_SIZE = 265; // Fixed header size
+    private readonly MAX_PACKET_SIZE = 1024;
 
     private readonly READ_FILE = 0;
     private readonly WRITE_FILE = 1;
@@ -350,7 +351,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         } else {
             const path = uri.path;
             if (path.length < this.rootFolder.length) {
-                this.rootFolder = path;    
+                this.rootFolder = path;
             }
         }
 
@@ -911,7 +912,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
-    public sendSearchFilesReq(pattern: string, mask: string): Promise<MultiReqData[]> {
+    public sendSearchFilesReq(pattern: string, mask: string, excludes: string[]): Promise<MultiReqData[]> {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
 
         const reqId = this.getReqId();
@@ -938,7 +939,24 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         buffer.writeUInt16BE(reqId, offset); offset += 2;
         buffer.writeUInt16BE(0, offset); offset += 2;  // seq no
 
-        const packet = Buffer.concat([buffer, maskLenBuf, maskBytes, patternLenBuf, patternBytes]);    // full packet
+        const packetTmp = Buffer.concat([buffer, maskLenBuf, maskBytes, patternLenBuf, patternBytes]);
+        let remainSize = this.MAX_PACKET_SIZE - packetTmp.length;
+
+        const buffers = excludes.map(str => {
+            if (str.length <= 255 && remainSize > (str.length + 1)) {
+                const strBuf = Buffer.from(str, 'utf8');
+                const lenBuf = Buffer.from([strBuf.length]); // 1-byte length
+                remainSize += strBuf.length + 1;
+                return Buffer.concat([lenBuf, strBuf]);
+            } else {
+                return Buffer.alloc(0);
+            }
+        });
+
+        let excBuffer = Buffer.concat(buffers);
+        excBuffer = Buffer.concat([excBuffer, Buffer.alloc(1, 0)]);
+        
+        const packet = Buffer.concat([packetTmp, excBuffer]);
 
         return new Promise((resolve, reject) => {
 
@@ -966,7 +984,15 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
     public searchTextInUdpfs(pattern: string, mask: string): Promise<SearchResult[]> {
 
-        return this.sendSearchFilesReq(pattern, mask).then(chunks => {
+        const filesExclude = vscode.workspace.getConfiguration().get<{ [key: string]: boolean }>('files.exclude') ?? {};
+        const searchExclude = vscode.workspace.getConfiguration().get<{ [key: string]: boolean }>('search.exclude') ?? {};
+
+        const excludes = { ...filesExclude, ...searchExclude };
+        const excludesArr: string[] = Object.entries(excludes)
+            .filter(([_, enabled]) => enabled)
+            .map(([pattern]) => pattern);
+
+        return this.sendSearchFilesReq(pattern, mask, excludesArr).then(chunks => {
             const items: SearchResult[] = [];
 
             // no need to sort search result

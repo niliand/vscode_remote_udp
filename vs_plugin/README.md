@@ -15,6 +15,13 @@
 - Find command "**UDP FS: Open File**" or "**OUDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
 - The "**UDP FS: Search Text in Files**" command helps you find text within files or locate files by name in an opened folder. To search only for file names, simply leave the search text field blank.
+- NOTE: Add search excludes to skip search in unrelated folders. In Command Palette find "Preferences: Open User Settings (JSON)" and add exludes like:
+~~~
+    "search.exclude": {
+        "**/.angular": true,
+        "**/node_modules": true
+    }
+~~~
 
 #### How-to config VScode using settings.json ###
 Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settings (JSON)" and add following lines:

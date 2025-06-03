@@ -85,17 +85,85 @@ void search_in_file(const fs::path &file_path, const std::string &search_text, s
     }
 }
 
-void search_files(const std::string &root_dir, const std::string &file_mask, const std::string &search_text, std::vector<SearchResult> &results)
+std::string regex_escape(const std::string &s)
+{
+    static const std::regex re{R"([-[\]{}()*+?.,\^$|#\s])"};
+    return std::regex_replace(s, re, R"(\$&)");
+}
+
+std::regex globToRegex(const std::string &glob)
+{
+    std::string regex = "^";
+    for (size_t i = 0; i < glob.size(); ++i)
+    {
+        char c = glob[i];
+        if (c == '*')
+        {
+            if (i + 1 < glob.size() && glob[i + 1] == '*')
+            {
+                regex += ".*";
+                ++i;
+            }
+            else
+            {
+                regex += "[^/]*";
+            }
+        }
+        else if (c == '?')
+        {
+            regex += '.';
+        }
+        else if (c == '.')
+        {
+            regex += "\\.";
+        }
+        else
+        {
+            regex += regex_escape(std::string(1, c));
+        }
+    }
+    regex += "$";
+    return std::regex(regex);
+}
+
+bool isExcluded(const fs::path &path, const std::vector<std::regex> &excludes)
+{
+    std::string strPath = path.generic_string();
+    for (const auto &re : excludes)
+    {
+        if (std::regex_match(strPath, re))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void search_files(const std::string &root_dir, const std::string &file_mask, const std::string &search_text,
+                  std::vector<std::regex> &excludes, std::vector<SearchResult> &results)
 {
     std::regex file_regex = wildcard_to_regex(file_mask);
 
     try
     {
-        for (auto &entry : fs::recursive_directory_iterator(root_dir))
+        for (auto it = fs::recursive_directory_iterator(root_dir); it != fs::recursive_directory_iterator(); ++it)
         {
+            const auto &entry = *it;
+            const auto &path = entry.path();
+
+            if (isExcluded(path, excludes))
+            {
+                std::cout << "Skip search in " << entry.path().filename().string() << "\n";
+                if (fs::is_directory(path))
+                {
+                    it.disable_recursion_pending(); // Don't descend into it
+                }
+                continue; // Skip this file/dir
+            }
             if (entry.is_regular_file())
             {
                 std::string filename = entry.path().filename().string();
+
                 if (std::regex_match(filename, file_regex))
                 {
                     if (search_text.length() > 0)
@@ -653,6 +721,8 @@ int main()
         {
             char pattern[255] = {0};
             char mask[255] = {0};
+            char exclude[255] = {0};
+            std::vector<std::string> excludes;
 
             uint8_t *p = recv_buffer + sizeof(packet_hdr);
             uint8_t maskLen = *p;
@@ -665,10 +735,38 @@ int main()
             memcpy(pattern, p, patternLen);
             p += patternLen;
 
+            // process excludes
+            while (*p != 0)
+            {
+                uint8_t exLen = *p;
+                ++p;
+                memcpy(exclude, p, exLen);
+                exclude[exLen] = 0;
+                p += exLen;
+
+                excludes.push_back(std::string(exclude));
+
+                if (p > recv_buffer + sizeof(recv_buffer))
+                {
+                    std::cerr << "Wrong exclude list! \n";
+                    break;
+                }
+            }
+
             std::cout << "SEARCH_FILES: mask=" << mask << ", pattern=" << pattern << ", in " << file_path << "\n";
+            for (const auto &ex : excludes)
+            {
+                std::cout << "Exclude: " << ex << "\n";
+            }
+
+            std::vector<std::regex> excludeRegexes;
+            for (const auto &p : excludes)
+            {
+                excludeRegexes.push_back(globToRegex(p));
+            }
 
             std::vector<SearchResult> results;
-            search_files(file_path, mask, pattern, results);
+            search_files(file_path, mask, pattern, excludeRegexes, results);
 
             send_hdr->flags = 0;
 
