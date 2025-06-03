@@ -4,6 +4,7 @@
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
   "version": "0.0.6",
   "icon": "icon.png",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.100.0"
   },
