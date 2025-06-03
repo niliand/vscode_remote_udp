@@ -384,6 +384,13 @@ int main()
                 continue; // Skip processing this packet
             }
 
+            auto size = fs::is_regular_file(file_path) ? fs::file_size(file_path) : 0;
+            if (size > 45000000) {
+                std::cerr << "Error: too big file to read: " << size << std::endl;
+                reply_error(sockfd, client_addr, addr_len, hdr->type, std::string(std::string("File too big to read: ") + file_path).c_str(), cipher);
+                continue; // Skip processing this packet
+            }
+
             // Read the file into a buffer
             std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
                                      std::istreambuf_iterator<char>());
