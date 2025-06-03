@@ -2,7 +2,7 @@
   "name": "udp-fs-provider",
   "displayName": "Remote - UDP FS Provider",
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "icon": "icon.png",
   "engines": {
     "vscode": "^1.100.0"
@@ -21,11 +21,15 @@
     "commands": [
       {
         "command": "udpfs.openFile",
-        "title": "Open UDP FS File"
+        "title": "UDP FS: Open File"
       },
       {
         "command": "udpfs.openRootFolder",
-        "title": "Open UDP FS Folder"
+        "title": "UDP FS: Open Folder"
+      },
+      {
+        "command": "udpfs.searchText",
+        "title": "UDP FS: Search Text in Files"
       }
     ],
     "configuration": {
@@ -66,5 +70,5 @@
     "type": "git",
     "url": "https://github.com/niliand/vscode_remote_udp.git"
   },
-  "publisher": "niliand" 
+  "publisher": "niliand"
 }

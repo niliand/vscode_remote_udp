@@ -10,6 +10,7 @@
 - Uses **UDP** instead of TCP for improved resilience in unstable network conditions  
 - Employs **AES encryption** for secure traffic  
 - Requires a custom **UDP server** running on the target machine
+- Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider allows you to continue editing opened files even if network issues occur.
 
 ---
 
@@ -55,5 +56,7 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 - In VSCode select Extensions, Select ... at the top and Install from VSIX...
 - Edit your configuration file and add fields listed above (hostname and key)
 - Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
-- Find command "**Open UDP FS File**" or "**Open UDP FS Folder**"
+- Find command "**UDP FS: Open File**" or "**UDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
+- The "**UDP FS: Search Text in Files**" command helps you find text within files or locate files by name in an opened folder. To search only for file names, simply leave the search text field blank.
+

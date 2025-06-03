@@ -11,6 +11,8 @@
 #include <map>
 #include <sstream>
 #include <algorithm>
+#include <regex>
+
 #include <openssl/sha.h> // SHA256
 #include <openssl/evp.h>
 
@@ -28,7 +30,83 @@ static std::map<std::string, std::vector<SessionData>> writeData;
 static void reply_error(int sockfd, const struct sockaddr_in &cliaddr, socklen_t len, uint8_t type, const char *msg, AESCipher &cipher);
 static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
                          const struct sockaddr *dest_addr, socklen_t addrlen, AESCipher &cipher);
-static std::string hex_dump(const void *data, size_t size);
+//static std::string hex_dump(const void *data, size_t size);
+
+// Helper to convert a wildcard pattern (like *.txt) into a regex
+std::regex wildcard_to_regex(const std::string &pattern)
+{
+    std::string regex_pattern;
+    for (char c : pattern)
+    {
+        switch (c)
+        {
+        case '*':
+            regex_pattern += ".*";
+            break;
+        case '?':
+            regex_pattern += ".";
+            break;
+        case '.':
+            regex_pattern += "\\.";
+            break;
+        default:
+            regex_pattern += c;
+            break;
+        }
+    }
+    return std::regex(regex_pattern, std::regex::icase);
+}
+
+void search_in_file(const fs::path &file_path, const std::string &search_text, std::vector<SearchResult> &results)
+{
+    std::ifstream file(file_path);
+    if (!file.is_open())
+        return;
+
+    std::string line;
+    uint16_t line_number = 0;
+
+    while (std::getline(file, line))
+    {
+        ++line_number;
+        if (line.find(search_text) != std::string::npos)
+        {
+            results.push_back({file_path, line.length() > 250 ? line.substr(0, 250) : line, line_number});
+            std::cout << "found text: " << file_path << ":" << line_number << ": " << line << "\n";
+        }
+
+        if (line_number == 0xFFFF) {
+            // max line number is 65535 for now
+            break;
+        }
+    }
+}
+
+void search_files(const std::string &root_dir, const std::string &file_mask, const std::string &search_text, std::vector<SearchResult> &results)
+{
+    std::regex file_regex = wildcard_to_regex(file_mask);
+
+    for (auto &entry : fs::recursive_directory_iterator(root_dir))
+    {
+        if (entry.is_regular_file())
+        {
+            std::string filename = entry.path().filename().string();
+            if (std::regex_match(filename, file_regex))
+            {
+                if (search_text.length() > 0)
+                {
+                    search_in_file(entry.path(), search_text, results);
+                }
+                else
+                {
+                    // just search files
+                    results.push_back({entry.path(), "", 0});
+                    std::cout << "found file: " << entry.path() << "\n";
+                }
+            }
+        }
+    }
+}
 
 // Convert file time to ISO 8601 string (UTC)
 std::string file_time_to_iso(const fs::file_time_type &ftime)
@@ -554,6 +632,96 @@ int main()
             crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(file_info), 0,
                           (const struct sockaddr *)&client_addr, addr_len, cipher);
         }
+        else if (hdr->type == PacketType::SEARCH_FILES)
+        {
+            char pattern[255] = {0};
+            char mask[255] = {0};
+
+            uint8_t *p = recv_buffer + sizeof(packet_hdr);
+            uint8_t maskLen = *p;
+            ++p;
+            memcpy(mask, p, maskLen);
+            p += maskLen;
+
+            uint8_t patternLen = *p;
+            ++p;
+            memcpy(pattern, p, patternLen);
+            p += patternLen;
+
+            std::cout << "SEARCH_FILES: mask=" << mask << ", pattern=" << pattern << ", in " << file_path << "\n";
+
+            std::vector<SearchResult> results;
+            search_files(file_path, mask, pattern, results);
+
+            send_hdr->flags = 0;
+
+            // total(1), path_len (1), path (1..255), line no (2), line_len (1), line (1..255)
+
+            size_t count = 0; // inside one packet
+            size_t added = 0; // total
+            uint16_t seqNo = 0;
+            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
+            size_t packed = 1; // first byte is num of entries
+            p = send_buffer + sizeof(packet_hdr) + 1;
+            for (const auto &r : results)
+            {
+                std::string newPath = r.path.substr(strlen(file_path));
+                if (!newPath.empty() && (newPath[0] == '/' || newPath[0] == '\\'))
+                {
+                    newPath.erase(0, 1);
+                }
+
+                size_t entryLen = r.line.length() + newPath.length() + 4; // 2 x len + lineNo(2)
+                
+                if ((packed + entryLen) > maxSize)
+                {
+                    // cannot pack next - send packet
+                    p = send_buffer + sizeof(packet_hdr);
+                    *p = count;
+                    ++p;
+                    send_hdr->length = htons(packed + 1);
+                    send_hdr->seqNo = htons(seqNo++);
+                    if (added == results.size())
+                    {
+                        send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                    }
+                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+
+                    count = 0;
+                    packed = 1;
+                }
+                *p = newPath.length();
+                ++p;
+                memcpy(p, newPath.c_str(), newPath.length());
+                p += newPath.length();
+                *((uint16_t*)p) = htons(r.lineNo); p += 2;
+                *p = r.line.length(); ++p;
+                memcpy(p, r.line.c_str(), r.line.length());
+                p += r.line.length();
+
+                packed += (4 + newPath.length() + r.line.length());                
+
+                ++count;
+                ++added;
+            }
+
+            if (count > 0)
+            {
+                // send rest
+
+                // set count:
+                p = send_buffer + sizeof(packet_hdr);
+                *p = count;
+
+                send_hdr->length = htons(packed + 1);
+                send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                send_hdr->seqNo = htons(seqNo++);
+                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                              (const struct sockaddr *)&client_addr, addr_len, cipher);
+                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
+            }
+        }
         else
         {
             std::cerr << "Unknown packet type received" << std::endl;
@@ -583,6 +751,7 @@ static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
     return sendto(sockfd, encrypted_data.data(), encrypted_data.size(), flags, dest_addr, addrlen);
 }
 
+#if 0
 static std::string hex_dump(const void *data, size_t size)
 {
     std::stringstream ss;
@@ -595,3 +764,4 @@ static std::string hex_dump(const void *data, size_t size)
 
     return ss.str();
 }
+#endif

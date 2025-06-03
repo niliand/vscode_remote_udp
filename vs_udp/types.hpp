@@ -12,8 +12,7 @@ enum PacketType {
     FILE_INFO,
     CREATE_DIRECTORY,
     RENAME_FILE,
-    SEARCH_FILES,
-    SEARCH_TEXT
+    SEARCH_FILES,     // search files or text in files
 };
 
 enum PacketFlags {
@@ -70,6 +69,7 @@ struct FileEntry {
     int type; // 1 = file, 2 = directory
 };
 
+// used for WRITE_FILE
 struct SessionData {
     uint8_t buffer[800];
     uint16_t length;
@@ -77,6 +77,11 @@ struct SessionData {
     uint16_t    seqNo;
 };
 
-
+struct SearchResult
+{
+    std::string path;
+    std::string line;
+    uint16_t lineNo;
+};
 
 #endif // _TYPES_HPP_
