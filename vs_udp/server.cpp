@@ -12,8 +12,9 @@
 #include <sstream>
 #include <algorithm>
 #include <regex>
-#include <chrono> // For std::chrono::milliseconds
-#include <thread> // For std::this_thread::sleep_for
+#include <chrono>
+#include <thread>
+#include <future>
 
 #include <openssl/sha.h> // SHA256
 #include <openssl/evp.h>
@@ -23,6 +24,7 @@
 #include "config.hpp"
 
 namespace fs = std::filesystem;
+using namespace std::chrono_literals; // Enables 1s, 500ms, etc. literals
 
 static uint8_t iv[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
 static uint8_t key[32];
@@ -34,13 +36,16 @@ static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
                          const struct sockaddr *dest_addr, socklen_t addrlen, AESCipher &cipher);
 // static std::string hex_dump(const void *data, size_t size);
 
-
-std::pair<std::string, std::string> splitPathAndMask(const std::string& input) {
+std::pair<std::string, std::string> splitPathAndMask(const std::string &input)
+{
     size_t pos = input.find_last_of("/\\");
-    if (pos == std::string::npos) {
+    if (pos == std::string::npos)
+    {
         // No slash found, treat whole input as mask
         return {"", input};
-    } else {
+    }
+    else
+    {
         return {input.substr(0, pos + 1), input.substr(pos + 1)};
     }
 }
@@ -70,10 +75,12 @@ std::regex wildcard_to_regex(const std::string &pattern)
     return std::regex(regex_pattern, std::regex::icase);
 }
 
-std::string to_lower(const std::string &s) {
+std::string to_lower(const std::string &s)
+{
     std::string lower = s;
     std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+                   [](unsigned char c)
+                   { return std::tolower(c); });
     return lower;
 }
 
@@ -486,67 +493,89 @@ int main()
 
             if (hdr->flags & PacketFlags::LAST_DATA)
             {
-                // write file
-                std::vector<SessionData> &packets = writeData[file_path];
+                std::string path(file_path);
+                // save asynchronously with a delay in case some remaining packets can be received
+                std::future<int> futureSave = std::async(std::launch::async, [path]() -> int
+                                                         {
+                                                             std::this_thread::sleep_for(500ms); // 0.5 second delay
+                                                             // write file
+                                                             std::vector<SessionData> &packets = writeData[path];
 
-                // Sort in ascending order by seqNo
-                std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
-                          { return a.seqNo < b.seqNo; });
+                                                             // Sort in ascending order by seqNo
+                                                             std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
+                                                                       { return a.seqNo < b.seqNo; });
 
-                uint16_t seq = 0;
-                bool ok = true;
-                for (const SessionData &packet : packets)
+                                                             uint16_t seq = 0;
+                                                             bool ok = true;
+                                                             for (const SessionData &packet : packets)
+                                                             {
+                                                                 if (packet.seqNo != seq)
+                                                                 {
+                                                                     std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
+                                                                     ok = false;
+                                                                     break;
+                                                                 }
+                                                                 ++seq;
+                                                             }
+
+                                                             if (!ok)
+                                                             {
+                                                                 writeData.erase(path);
+                                                                 return 1;
+                                                             }
+
+                                                             // open file for write and append, or create file
+                                                             std::ofstream outFile;
+                                                             outFile.open(path, std::ios::binary | std::ios::trunc);
+                                                             if (!outFile)
+                                                             {
+                                                                 std::cerr << "Failed to open file for writing: " << path << std::endl;
+                                                                 return 2;
+                                                             }
+
+                                                             seq = 0;
+                                                             for (const SessionData &packet : packets)
+                                                             {
+                                                                 if (packet.seqNo != seq)
+                                                                 {
+                                                                     std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
+                                                                     return 3;
+                                                                 }
+
+                                                                 ++seq;
+
+                                                                 outFile.write(reinterpret_cast<const char *>(packet.buffer), packet.length);
+                                                             }
+
+                                                             outFile.close();
+
+                                                             writeData.erase(path);
+
+                                                             return 0; // Return a value
+                                                         });
+
+                int result = futureSave.get(); // Wait for the third lambda and get its result
+                if (0 == result)
                 {
-                    if (packet.seqNo != seq)
-                    {
-                        std::cerr << "Seq No mismatch: " << file_path << ", " << packet.seqNo << " != " << seq << std::endl;
-                        reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't write file", cipher);
-                        ok = false;
-                        break;
-                    }
-                    ++seq;
+                    // reply for ACK
+                    send_hdr->flags = 0;
+                    send_hdr->length = 0;
+                    sent_bytes = crypto_sendto(sockfd, send_buffer,
+                                               sizeof(packet_hdr), 0,
+                                               (struct sockaddr *)&client_addr, addr_len, cipher);
                 }
-
-                if (!ok)
+                else if (result == 1)
                 {
-                    continue;
+                    reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't write file", cipher);
                 }
-
-                // open file for write and append, or create file
-                std::ofstream outFile;
-                outFile.open(file_path, std::ios::binary | std::ios::trunc);
-                if (!outFile)
+                else if (result == 2)
                 {
-                    std::cerr << "Failed to open file for writing: " << file_path << std::endl;
                     reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't open file for writing", cipher);
-                    continue;
                 }
-
-                seq = 0;
-                for (const SessionData &packet : packets)
+                else if (result == 3)
                 {
-                    if (packet.seqNo != seq)
-                    {
-                        std::cerr << "Seq No mismatch: " << file_path << ", " << packet.seqNo << " != " << seq << std::endl;
-                        reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't write file", cipher);
-                        break;
-                    }
-
-                    ++seq;
-
-                    outFile.write(reinterpret_cast<const char *>(packet.buffer), packet.length);
+                    reply_error(sockfd, client_addr, addr_len, hdr->type, "Can't write file", cipher);
                 }
-
-                outFile.close();
-
-                writeData.erase(file_path);
-
-                // reply for ACK
-                send_hdr->flags = 0;
-                send_hdr->length = 0;
-                sent_bytes = crypto_sendto(sockfd, send_buffer,
-                                           sizeof(packet_hdr), 0,
-                                           (struct sockaddr *)&client_addr, addr_len, cipher);
             }
         }
         else if (hdr->type == PacketType::DELETE_FILE)
@@ -824,8 +853,9 @@ int main()
 
             std::string folder = std::string(file_path);
             if (!pathStr.empty())
-               folder += "/" + pathStr;
-            if (maskStr.empty()){
+                folder += "/" + pathStr;
+            if (maskStr.empty())
+            {
                 maskStr = "*";
             }
             search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, results);
