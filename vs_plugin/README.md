@@ -11,7 +11,7 @@
 
 ### How to use extension
 - Edit your settings.json and add fields listed below (hostname and key)
-- Find and click UDPFS icon at left panel
+- Find and click UDPFS icon in the left pane
 - Or use Command Palette (Ctrl+P or Ctrl+Cmd+P)
 - Find command "**UDP FS: Open File**" or "**OUDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/

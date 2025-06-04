@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as dgram from 'dgram';
 import { Buffer } from 'buffer';
 import * as crypto from 'crypto';
+import { controller } from './ExtensionController';
 
 type PendingRequest = {
     resolve: (value?: any) => void;
@@ -71,7 +72,9 @@ export function activate(context: vscode.ExtensionContext) {
                 const uri = parseUdpfsUri(uriInput); // Use your helper here
                 if (!uri) return;
 
-                udpFs.rootFolder = uri.path;
+                controller.setFolderPath(uri.path)
+                //UdpFileSystemProvider.rootFolder = uri.path;
+                console.log(`#### rootFolder=${controller.getFolderPath()}`);
 
                 //await vscode.commands.executeCommand("vscode.openFolder", uri);
 
@@ -93,7 +96,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('udpfs.searchText', async () => {
 
-            if (!udpFs.rootFolder) {
+            if (!controller.getFolderPath()) {
                 vscode.window.showErrorMessage(`UDP FS: Folder is not opened`);
                 return;
             }
@@ -188,13 +191,15 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly END_OF_TRANSMISSION_FLAG = 0x01;
     private readonly ERROR_FLAG = 0x02;
     private readonly FIRST_DATA = 0x04;
+    private readonly CASE_SENSITIVE = 0x08;
+    private readonly WHOLE_WORD = 0x10;
 
     private iv = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex'); // 16-byte IV
     private key!: Buffer;
 
     private _reqId = 1;
 
-    public rootFolder?: string;
+    //public static rootFolder?: string;
 
     private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> = this._onDidChangeFile.event;
@@ -353,12 +358,14 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         console.log('readDirectory called for', uri.toString());
 
         // set rootFolder
-        if (!this.rootFolder) {
-            this.rootFolder = uri.path;
+        if (!controller.getFolderPath()) {
+            controller.setFolderPath(uri.path);
+            console.log(`####2 rootFolder=${controller.getFolderPath()}`);
         } else {
             const path = uri.path;
-            if (path.length < this.rootFolder.length) {
-                this.rootFolder = path;
+            if (path.length < controller.getFolderPath().length) {
+                console.log(`##### was rootFolder=${controller.getFolderPath()} ===> ${path}`);
+                controller.setFolderPath(path);
             }
         }
 
@@ -919,7 +926,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
-    public sendSearchFilesReq(pattern: string, mask: string, excludes: string[]): Promise<MultiReqData[]> {
+    public sendSearchFilesReq(pattern: string, mask: string, excludes: string[], caseSensitive: boolean, wholeWord: boolean): Promise<MultiReqData[]> {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
 
         const reqId = this.getReqId();
@@ -928,10 +935,15 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         let offset = 0;
         buffer.writeUInt8(this.version, offset++);            // version
         buffer.writeUInt8(this.SEARCH_FILES, offset++);               // type
-        buffer.writeUInt16BE(0, offset); offset += 2; // flags (big-endian)
+        let flags = 0;
+        if (caseSensitive)
+            flags += this.CASE_SENSITIVE;
+        if (wholeWord)
+            flags += this.WHOLE_WORD;
+        buffer.writeUInt16BE(flags, offset); offset += 2; // flags (big-endian)
 
         // Write URI string into buffer
-        const uriStr = this.rootFolder ?? '';
+        const uriStr = controller.getFolderPath();
         const uriBytes = Buffer.from(uriStr, 'utf8');
         uriBytes.copy(buffer, offset);
         offset += 255; // move past URI (rest will be zero-padded automatically)
@@ -989,7 +1001,12 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
-    public searchTextInUdpfs(pattern: string, mask: string): Promise<SearchResult[]> {
+    public searchTextInUdpfs(pattern: string, mask: string, caseSensitive: boolean = true, wholeWord: boolean = false): Promise<SearchResult[]> {
+
+        if (!controller.getFolderPath()) {
+            vscode.window.showErrorMessage(`UDP FS: Folder is not opened`);
+            return Promise.resolve([]);
+        }
 
         const filesExclude = vscode.workspace.getConfiguration().get<{ [key: string]: boolean }>('files.exclude') ?? {};
         const searchExclude = vscode.workspace.getConfiguration().get<{ [key: string]: boolean }>('search.exclude') ?? {};
@@ -999,7 +1016,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             .filter(([_, enabled]) => enabled)
             .map(([pattern]) => pattern);
 
-        return this.sendSearchFilesReq(pattern, mask, excludesArr).then(chunks => {
+        return this.sendSearchFilesReq(pattern, mask, excludesArr, caseSensitive, wholeWord).then(chunks => {
             const items: SearchResult[] = [];
 
             // no need to sort search result
@@ -1031,7 +1048,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     }
 
                     console.log(`SEARCH: ${path}:${lineNo}  lineLen=${lineLen} line=${lineStr}`);
-                    items.push({ uri: vscode.Uri.parse('udpfs://' + this.rootFolder + '/' + path), line: lineNo, match: lineStr });
+                    items.push({ uri: vscode.Uri.parse('udpfs://' + controller.getFolderPath() + '/' + path), line: lineNo, match: lineStr });
                 }
             }
 
@@ -1051,35 +1068,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
 } //UdpFileSystemProvider
 
-//
-// File search
-//
-interface FileSearchQuery {
-    pattern: string;
-}
 
-interface FileSearchOptions {
-    folder: vscode.Uri;
-    includes?: string[];
-    excludes: string[];
-    useIgnoreFiles: boolean;
-    useGlobalIgnoreFiles: boolean;
-    followSymlinks: boolean;
-    maxResults?: number;
-}
-/*
-class UdpfsFileSearchProvider {
-    constructor(private fs: UdpFileSystemProvider) { }
-
-    async provideFileSearchResults(
-        query: FileSearchQuery,
-        options: FileSearchOptions,
-        _token: vscode.CancellationToken
-    ): Promise<vscode.Uri[]> {
-
-    
-}
-*/
 function showSearchResultsInWebview(results: SearchResult[], pattern: string) {
     const panel = vscode.window.createWebviewPanel(
         'udpfsSearch',
@@ -1155,30 +1144,34 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(message => {
             if (message.command === 'startSearch') {
-                const { searchText, fileMask } = message;
+                const { searchText, fileMask, caseSensitive, wholeWord } = message;
 
                 if (!fileMask) {
                     vscode.window.showErrorMessage(`File mask is empty.`);
                     return;
                 }
 
-                vscode.window.showInformationMessage(`Searching for: ${searchText} in ${fileMask}`);
+                if (searchText) {
+                    vscode.window.showInformationMessage(`Searching for: ${searchText} in ${fileMask}`);
+                } else {
+                    vscode.window.showInformationMessage(`Searching for ${fileMask}`);
+                }
 
-                this.startSearch(searchText, fileMask)
+                this.startSearch(searchText, fileMask, caseSensitive, wholeWord)
             } else if (message.command === 'openFolder') {
                 void vscode.commands.executeCommand('udpfs.openRootFolder', ...(message.args || []));
-             }
+            }
         });
     }
 
-    private startSearch(searchText: string, fileMask: string) {
+    private startSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
         // Fire-and-forget async call
-        void this.doSearch(searchText, fileMask);
+        void this.doSearch(searchText, fileMask, caseSensitive, wholeWord);
     }
 
-    private async doSearch(searchText: string, fileMask: string) {
+    private async doSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
         try {
-            const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask);
+            const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask, caseSensitive, wholeWord);
             showSearchResultsInWebview(results, searchText ?? '');
         } catch (err) {
             console.error('Search error:', err);
@@ -1198,56 +1191,126 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
       padding: 8px;
     }
 
-    input {
-      background-color: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      padding: 4px;
-      margin-bottom: 8px;
-      width: 100%;
-    }
+input {
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  padding: 4px;
+  margin-bottom: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
 
-    button {
-      background-color: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      padding: 6px;
-      width: 100%;
-      cursor: pointer;
-    }
+/* Only the top "Open folder" button should stretch */
+button.full-width {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 6px;
+  width: 100%;
+  cursor: pointer;
+  box-sizing: border-box;
+}
 
-    hr {
-       background-color: var(--vscode-input-background);
-    }
+button.full-width:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
 
-    button:hover {
-      background-color: var(--vscode-button-hoverBackground);
-    }
+/* Search container layout */
+.search-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: var(--vscode-input-background);
+    padding: 0 4px;
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    height: 28px;
+    box-sizing: border-box;
+    margin-bottom: 8px;
+}
+
+.search-container input {
+    flex: 1;
+    border: none;
+    background-color: transparent;
+    color: var(--vscode-input-foreground);
+    font-size: 13px;
+    line-height: 24px;
+    padding: 0;
+    height: 24px;
+    margin: 0;
+    outline: none;
+    box-sizing: border-box;
+}
+
+/* Small toggle buttons */
+  .toggle-button {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: none;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 3px;
+    height: 24px;
+    line-height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+.toggle-button.active {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}   
   </style>
 </head>
 <body>
-  <button onclick="openFolder()">Open folder</button>
+  <button id="openFolderBtn" class="full-width">Open folder</button>
   <br> <br><hr> <br>
+
+<div class="search-container">
   <input id="searchText" placeholder="Search text" />
+  <button class="toggle-button" id="caseToggle">Aa</button>
+  <button class="toggle-button" id="wordToggle">W</button>
+</div>
+
   <input id="fileMask" placeholder="File mask (e.g. *.ts)" />
-  <button onclick="startSearch()">Search text</button>
+  <button class="full-width" onclick="startSearch()">Search text</button>
 
   <br> <br><hr> <br>
   <input id="fileMask2" placeholder="File mask (e.g. user*)" />
-  <button onclick="startSearchFiles()">Search filenames</button>
+  <button class="full-width" onclick="startSearchFiles()">Search filenames</button>
 
   <script>
     const vscode = acquireVsCodeApi();
 
-    function openFolder() {
-       vscode.postMessage({ command: 'openFolder' });
-    }
+  const caseBtn = document.getElementById('caseToggle');
+  const wordBtn = document.getElementById('wordToggle');
+
+  caseBtn.addEventListener('click', () => {
+    caseBtn.classList.toggle('active');
+  });
+
+  wordBtn.addEventListener('click', () => {
+    wordBtn.classList.toggle('active');
+  });    
+
+  const openFolderBtn = document.getElementById('openFolderBtn');
+  console.log('openFolderBtn=', openFolderBtn);
+  openFolderBtn.addEventListener('click', () => {
+    vscode.postMessage({ command: 'openFolder' });
+  });
 
     function startSearch() {
       const searchText = document.getElementById('searchText').value;
+      const caseSensitive = caseBtn.classList.contains('active');
+      const wholeWord = wordBtn.classList.contains('active');
       const fileMask = document.getElementById('fileMask').value;
-      vscode.postMessage({ command: 'startSearch', searchText, fileMask });
+      vscode.postMessage({ command: 'startSearch', searchText, fileMask, caseSensitive, wholeWord });
     }
+
     function startSearchFiles() {
       const searchText = '';
       const fileMask = document.getElementById('fileMask2').value;

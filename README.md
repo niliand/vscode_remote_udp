@@ -55,7 +55,7 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 - You can install extension using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
 - In VSCode select Extensions, Select ... at the top and Install from VSIX...
 - Edit your configuration file and add fields listed above (hostname and key)
-- Find and click UDPFS icon at left panel
+- Find and click UDPFS icon in the left pane
 - Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
 - Find command "**UDP FS: Open File**" or "**UDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/

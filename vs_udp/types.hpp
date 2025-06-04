@@ -19,6 +19,8 @@ enum PacketFlags {
     LAST_DATA = 0x01, // Indicates that this is the last packet of data
     ERROR = 0x02,      // Indicates an error occurred
     FIRST_DATA = 0x04,    // first packet
+    CASE_SENSITIVE = 0x08,
+    WHOLE_WORD = 0x10,
 };
 
 struct packet_hdr {

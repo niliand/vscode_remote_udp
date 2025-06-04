@@ -34,6 +34,17 @@ static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
                          const struct sockaddr *dest_addr, socklen_t addrlen, AESCipher &cipher);
 // static std::string hex_dump(const void *data, size_t size);
 
+
+std::pair<std::string, std::string> splitPathAndMask(const std::string& input) {
+    size_t pos = input.find_last_of("/\\");
+    if (pos == std::string::npos) {
+        // No slash found, treat whole input as mask
+        return {"", input};
+    } else {
+        return {input.substr(0, pos + 1), input.substr(pos + 1)};
+    }
+}
+
 // Helper to convert a wildcard pattern (like *.txt) into a regex
 std::regex wildcard_to_regex(const std::string &pattern)
 {
@@ -59,7 +70,14 @@ std::regex wildcard_to_regex(const std::string &pattern)
     return std::regex(regex_pattern, std::regex::icase);
 }
 
-void search_in_file(const fs::path &file_path, const std::string &search_text, std::vector<SearchResult> &results)
+std::string to_lower(const std::string &s) {
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    return lower;
+}
+
+void search_in_file(const fs::path &file_path, const std::string &search_text, bool case_sensitive, bool whole_word, std::vector<SearchResult> &results)
 {
     std::ifstream file(file_path);
     if (!file.is_open())
@@ -68,13 +86,37 @@ void search_in_file(const fs::path &file_path, const std::string &search_text, s
     std::string line;
     uint16_t line_number = 0;
 
+    // Prepare regex if whole_word is set
+    std::regex word_regex;
+    if (whole_word)
+    {
+        std::string pattern = "\\b" + search_text + "\\b";
+        word_regex = case_sensitive
+                         ? std::regex(pattern)
+                         : std::regex(pattern, std::regex_constants::icase);
+    }
+
     while (std::getline(file, line))
     {
         ++line_number;
-        if (line.find(search_text) != std::string::npos)
+        bool match = false;
+
+        if (whole_word)
         {
-            results.push_back({file_path, line.length() > 250 ? line.substr(0, 250) : line, line_number});
-            std::cout << "found text: " << file_path << ":" << line_number << ": " << line << "\n";
+            match = std::regex_search(line, word_regex);
+        }
+        else
+        {
+            std::string haystack = case_sensitive ? line : to_lower(line);
+            std::string needle = case_sensitive ? search_text : to_lower(search_text);
+            match = haystack.find(needle) != std::string::npos;
+        }
+
+        if (match)
+        {
+            std::string snippet = line.length() > 250 ? line.substr(0, 250) : line;
+            results.push_back({file_path, snippet, line_number});
+            std::cout << "found text: " << file_path << ":" << line_number << ": " << snippet << "\n";
         }
 
         if (line_number == 0xFFFF)
@@ -140,7 +182,7 @@ bool isExcluded(const fs::path &path, const std::vector<std::regex> &excludes)
 }
 
 void search_files(const std::string &root_dir, const std::string &file_mask, const std::string &search_text,
-                  std::vector<std::regex> &excludes, std::vector<SearchResult> &results)
+                  std::vector<std::regex> &excludes, bool case_sens, bool whole_word, std::vector<SearchResult> &results)
 {
     std::regex file_regex = wildcard_to_regex(file_mask);
 
@@ -168,7 +210,7 @@ void search_files(const std::string &root_dir, const std::string &file_mask, con
                 {
                     if (search_text.length() > 0)
                     {
-                        search_in_file(entry.path(), search_text, results);
+                        search_in_file(entry.path(), search_text, case_sens, whole_word, results);
                     }
                     else
                     {
@@ -371,7 +413,7 @@ int main()
         send_hdr->seqNo = htons(hdr->seqNo);
 
         // Process the packet based on its type
-        if (hdr->type == READ_FILE)
+        if (hdr->type == PacketType::READ_FILE)
         {
             std::cout << "Processing READ_FILE request for URI: " << hdr->uri << std::endl;
 
@@ -385,7 +427,8 @@ int main()
             }
 
             auto size = fs::is_regular_file(file_path) ? fs::file_size(file_path) : 0;
-            if (size > 45000000) {
+            if (size > 45000000)
+            {
                 std::cerr << "Error: too big file to read: " << size << std::endl;
                 reply_error(sockfd, client_addr, addr_len, hdr->type, std::string(std::string("File too big to read: ") + file_path).c_str(), cipher);
                 continue; // Skip processing this packet
@@ -431,7 +474,7 @@ int main()
                     break;
             }
         }
-        else if (hdr->type == WRITE_FILE)
+        else if (hdr->type == PacketType::WRITE_FILE)
         {
             std::cout << "Processing WRITE_FILE request for URI: " << hdr->uri << ", seqNo: " << hdr->seqNo << std::endl;
 
@@ -505,7 +548,7 @@ int main()
                                            (struct sockaddr *)&client_addr, addr_len, cipher);
             }
         }
-        else if (hdr->type == DELETE_FILE)
+        else if (hdr->type == PacketType::DELETE_FILE)
         {
             std::cout << "Processing DELETE_FILE request for URI: " << hdr->uri << std::endl;
 
@@ -558,7 +601,7 @@ int main()
             crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(file_info), 0,
                           (const struct sockaddr *)&client_addr, addr_len, cipher);
         }
-        else if (hdr->type == LIST_FILES)
+        else if (hdr->type == PacketType::LIST_FILES)
         {
             std::cout << "Processing LIST_FILES request" << std::endl;
             auto files = listDirectory(file_path);
@@ -625,7 +668,7 @@ int main()
                 std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
             }
         }
-        else if (hdr->type == FILE_INFO)
+        else if (hdr->type == PacketType::FILE_INFO)
         {
             std::cout << "Processing FILE_INFO request for URI: " << hdr->uri << std::endl;
             fs::path fpath(file_path);
@@ -760,6 +803,9 @@ int main()
                 }
             }
 
+            bool case_sens = hdr->flags & PacketFlags::CASE_SENSITIVE;
+            bool whole_word = hdr->flags & PacketFlags::WHOLE_WORD;
+
             std::cout << "SEARCH_FILES: mask=" << mask << ", pattern=" << pattern << ", in " << file_path << "\n";
             for (const auto &ex : excludes)
             {
@@ -773,7 +819,15 @@ int main()
             }
 
             std::vector<SearchResult> results;
-            search_files(file_path, mask, pattern, excludeRegexes, results);
+            auto [pathStr, maskStr] = splitPathAndMask(mask);
+
+            std::string folder = std::string(file_path);
+            if (!pathStr.empty())
+               folder += "/" + pathStr;
+            if (maskStr.empty()){
+                maskStr = "*";
+            }
+            search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, results);
 
             send_hdr->flags = 0;
 
