@@ -504,6 +504,7 @@ int main()
                         ok = false;
                         break;
                     }
+                    ++seq;
                 }
 
                 if (!ok)

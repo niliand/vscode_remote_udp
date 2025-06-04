@@ -13,7 +13,7 @@
 - Edit your settings.json and add fields listed below (hostname and key)
 - Find and click UDPFS icon in the left pane
 - Or use Command Palette (Ctrl+P or Ctrl+Cmd+P)
-- Find command "**UDP FS: Open File**" or "**OUDP FS: Open Folder**"
+- Find command "**UDP FS: Open File**" or "**UDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
 - The "**UDP FS: Search Text in Files**" command helps you find text within files. To search only for file names, simply leave the search text field blank.
 - NOTE: Add search excludes to skip search in unrelated folders. In Command Palette find "Preferences: Open User Settings (JSON)" and add exludes like:
@@ -37,7 +37,8 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 ### Current restrictions
 
 - Max path limited to 254 symbols (fits the most cases)
-- Does not support big files over 45 Mb
+- Doesn't support big files over 45 Mb
+- Doesn't monitor external file changes; updates made outside the editor won't be reloaded.
 - NOTE: it is expected that some operations like read or save file can show error - just try again later. It is due to network loses / delays.
 
 ### To install server
