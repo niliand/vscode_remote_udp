@@ -137,11 +137,35 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(configChangeDisposable);
 
+    const udpfsSearchView = new UDPFSSearchViewProvider(context, udpFs);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             'udpfsSearchView',
-            new UDPFSSearchViewProvider(context, udpFs)
+            udpfsSearchView
         )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('udpfs.searchInThisFolder', async (uri: vscode.Uri) => {
+            if (uri) {
+                vscode.commands.executeCommand('workbench.view.udpfsSearchView');
+                vscode.commands.executeCommand('udpfsSearchView.focus');
+                udpfsSearchView.setSearchFolder(uri.path);
+            } else {
+                const uriInput = await vscode.window.showInputBox({
+                    prompt: 'Enter folder'
+                });
+
+                if (!uriInput) {
+                    vscode.window.showWarningMessage('No path entered.');
+                    return;
+                }
+                vscode.commands.executeCommand('workbench.view.udpfsSearchView');
+                vscode.commands.executeCommand('udpfsSearchView.focus');
+                udpfsSearchView.setSearchFolder(uriInput);
+
+            }
+        })
     );
 
     //vscode.workspace.registerFileSearchProvider('udpfs', new UdpfsFileSearchProvider(udpFs));
@@ -1129,6 +1153,8 @@ function escapeHtml(text: string): string {
 }
 
 class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
+    private _view?: vscode.WebviewView;
+
     constructor(private context: vscode.ExtensionContext, private udpFs: UdpFileSystemProvider) { }
 
     resolveWebviewView(
@@ -1139,6 +1165,8 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.options = {
             enableScripts: true
         };
+
+        this._view = webviewView;
 
         webviewView.webview.html = this.getHtml(webviewView.webview);
 
@@ -1161,7 +1189,7 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
                 if (searchText) {
                     this.startSearch(searchText, fileMask, caseSensitive, wholeWord);
                 } else {
-                    this.startSearchFiles(fileMask, webviewView);
+                    this.startSearchFiles(fileMask);
                 }
             } else if (message.command === 'openFolder') {
                 void vscode.commands.executeCommand('udpfs.openRootFolder', ...(message.args || []));
@@ -1179,13 +1207,28 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
 
     }
 
+    public setSearchFolder(folder: string) {
+        if (this._view) {
+            let _folder = folder;
+            if (_folder.length > controller.getFolderPath().length)
+            {
+               _folder = _folder.slice(controller.getFolderPath().length + 1) + '/';
+            }
+            else {
+                if (!_folder.endsWith('/'))
+                    _folder += '/';
+            }
+            this._view.webview.postMessage({ command: 'folder', folder: _folder });
+        }
+    }
+
     private startSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
         // Fire-and-forget async call
         void this.doSearch(searchText, fileMask, caseSensitive, wholeWord);
     }
 
-    private startSearchFiles(fileMask: string, webviewView: vscode.WebviewView) {
-        void this.doSearchFiles(fileMask, webviewView);
+    private startSearchFiles(fileMask: string) {
+        void this.doSearchFiles(fileMask);
     }
 
     private async doSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
@@ -1197,10 +1240,10 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async doSearchFiles(fileMask: string, webviewView: vscode.WebviewView) {
+    private async doSearchFiles(fileMask: string) {
         try {
             const results = await this.udpFs.searchTextInUdpfs('', '*' + fileMask + '*', false, false);
-            webviewView.webview.postMessage({
+            this._view?.webview.postMessage({
                 command: 'updateFileList',
                 files: results.map(obj => ({
                     path: obj.uri.path,
@@ -1381,6 +1424,9 @@ window.addEventListener('message', event => {
     const message = event.data;
     if (message.command === 'updateFileList') {
       updateFileList(message.files);
+    } else if (message.command === 'folder') {
+       const fileMask = document.getElementById('fileMask');
+       fileMask.value = message.folder;
     }
   });
 
