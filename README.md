@@ -15,13 +15,38 @@
 ---
 
 ## How to Compile and Run the UDP Server
+First install dependencies:
+
+Debian/Ubuntu:
 ~~~
-cd vs_udp/
+sudo apt update
+sudo apt install build-essential libssl-dev
+~~~
+
+RedHat/Centos:
+~~~
+sudo dnf group install "Development Tools"
+sudo dnf install openssl-devel
+~~~
+
+Build server:
+~~~
+git clone https://github.com/niliand/vscode_remote_udp.git
+cd vscode_remote_udp/vs_udp/
 make
 ~~~
-!! edit config.txt to define your own key string !!
+!! edit **config.txt** to define your own key string !!
+
+Run server:
+~~~
+./server
+~~~
+
+Run it in tmux/screen session to make it persistent
 
 ### Add firewall rule for UDP port 9022
+If needed - add firewall config
+
 Ubuntu/Debian:
 ~~~
 sudo ufw allow 9022/udp
@@ -33,12 +58,7 @@ sudo firewall-cmd --permanent --add-port=9022/udp
 sudo firewall-cmd --reload
 ~~~
 
-Run server:
-~~~
-./server
-~~~
 
-Run it in tmux/screen session to make it persistent
 
 
 ## How-to config VScode using settings.json ###
@@ -52,14 +72,14 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 ~~~
 
 ## How to use extension
-- You can install extension using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
-- In VSCode select Extensions, Select ... at the top and Install from VSIX...
+- You can install extension from the Extension Store or using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
+- In VSCode select Extensions, either find "Remote UDP FS Provide" in the list, or Select [...] icon at the top and item "Install from VSIX..."
 - Edit your configuration file and add fields listed above (hostname and key)
 - Find and click UDPFS icon in the left pane
-- Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
+- Alternatively Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
 - Find command "**UDP FS: Open File**" or "**UDP FS: Open Folder**"
 - Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
-- The "**UDP FS: Search Text in Files**" command helps you find text within files. To search only for file names, simply leave the search text field blank.
+- The "**UDP FS: Search Text in Files**" command helps you find text within files.
 - NOTE: Add search excludes to skip search in unrelated folders. In Command Palette find "Preferences: Open User Settings (JSON)" and add exludes like:
 ~~~
     "search.exclude": {

@@ -1234,8 +1234,17 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
     private async doSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
         try {
             const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask, caseSensitive, wholeWord);
+
+            this._view?.webview.postMessage({
+                command: 'textSearchFinished'
+            });
+
             showSearchResultsInWebview(results, searchText ?? '');
         } catch (err) {
+            this._view?.webview.postMessage({
+                command: 'textSearchFinished'
+            });
+
             console.error('Search error:', err);
         }
     }
@@ -1357,6 +1366,35 @@ button.full-width:hover {
     text-decoration: underline;
   }
 
+  .progressBarContainer {
+    display: none;
+    height: 4px;
+    background-color: var(--vscode-editor-background);
+    overflow: hidden;
+    position: relative;
+    margin: 10px 0;
+  }
+
+  #progressBar {
+    height: 100%;
+    width: 30%;
+    background-color: var(--vscode-progressBar-background, var(--vscode-foreground));
+    position: absolute;
+    animation: moveBar 1.2s infinite;
+  }
+
+  @keyframes moveBar {
+    0% {
+      left: -30%;
+    }
+    50% {
+      left: 50%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+
   </style>
 </head>
 <body>
@@ -1370,11 +1408,18 @@ button.full-width:hover {
 </div>
 
   <input id="fileMask" placeholder="File mask (e.g. *.ts)" />
-  <button class="full-width" onclick="startSearch()">Search text</button>
+<div class="progressBarContainer" id="progressBarContainerText">
+  <div id="progressBar"></div>
+</div>  
+  <button id="searchTextBtn" class="full-width" onclick="startSearch()">Search text</button>
 
   <br> <br><hr> <br>
   <input id="fileMask2" placeholder="File mask (e.g. user*)" />
   
+<div class="progressBarContainer" id="progressBarContainer">
+  <div id="progressBar"></div>
+</div>
+
   <ul id="fileList"></ul>
 
   <script>
@@ -1402,6 +1447,9 @@ button.full-width:hover {
       const caseSensitive = caseBtn.classList.contains('active');
       const wholeWord = wordBtn.classList.contains('active');
       const fileMask = document.getElementById('fileMask').value;
+    
+      document.getElementById('searchTextBtn').style.display = 'none';
+      document.getElementById('progressBarContainerText').style.display = 'block';
       vscode.postMessage({ command: 'startSearch', searchText, fileMask, caseSensitive, wholeWord });
     }
 
@@ -1414,7 +1462,8 @@ button.full-width:hover {
     debounceTimeout = setTimeout(() => {
       const fileMask = inputFiles.value;
       const searchText = '';
-      if (fileMask) {
+      if (fileMask && fileMask.length > 1) {
+         document.getElementById('progressBarContainer').style.display = 'block';
          vscode.postMessage({ command: 'startSearch', searchText, fileMask });
       }
     }, 500); // 500ms delay
@@ -1423,10 +1472,14 @@ button.full-width:hover {
 window.addEventListener('message', event => {
     const message = event.data;
     if (message.command === 'updateFileList') {
+      document.getElementById('progressBarContainer').style.display = 'none';
       updateFileList(message.files);
     } else if (message.command === 'folder') {
        const fileMask = document.getElementById('fileMask');
        fileMask.value = message.folder;
+    } else if (message.command === 'textSearchFinished') {
+      document.getElementById('searchTextBtn').style.display = 'block';
+      document.getElementById('progressBarContainerText').style.display = 'none';
     }
   });
 

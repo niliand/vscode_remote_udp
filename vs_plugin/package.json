@@ -2,7 +2,7 @@
   "name": "udp-fs-provider",
   "displayName": "Remote - UDP FS Provider",
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "icon": "icon.png",
   "license": "MIT",
   "engines": {
