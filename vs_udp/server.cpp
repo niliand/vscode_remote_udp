@@ -884,6 +884,8 @@ int main()
             if (maskStr.empty())
             {
                 maskStr = "*";
+            } else {
+                maskStr = "*" + maskStr + "*";
             }
             search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, results);
 

@@ -1101,18 +1101,28 @@ function showSearchResultsInWebview(results: SearchResult[], pattern: string) {
         { enableScripts: true }
     );
 
+    const regex = new RegExp(`(${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+
     const linksHtml = results.length > 0
         ? results.map(r =>
             `<div>
           <a href="#" onclick="vscode.postMessage({ command: 'open', uri: '${r.uri.toString()}', line: ${r.line > 0 ? r.line - 1 : 1} })">
             ${r.uri.path}:${r.line > 0 ? r.line : 1}
-          </a> ${r.line > 0 ? '—' : ''} <code>${escapeHtml(r.match)}</code>
+          </a> ${r.line > 0 ? '—' : ''} <code>${escapeHtml(r.match).replace(regex, '<span class="highlight">$1</span>')}</code>
         </div>`
         ).join('')
         : `<p>No matches found.</p>`;
 
     panel.webview.html = `
     <html>
+    <head>
+    <style>
+        .highlight {
+          background-color: var(--vscode-editor-findMatchHighlightBackground, yellow);
+          color: inherit;
+        }
+    </style>
+    </head>
     <body>
       <h2>Search Results for <code>${escapeHtml(pattern)}</code></h2>
       ${linksHtml}
@@ -1251,7 +1261,7 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
 
     private async doSearchFiles(fileMask: string) {
         try {
-            const results = await this.udpFs.searchTextInUdpfs('', '*' + fileMask + '*', false, false);
+            const results = await this.udpFs.searchTextInUdpfs('', fileMask, false, false);
             this._view?.webview.postMessage({
                 command: 'updateFileList',
                 files: results.map(obj => ({
