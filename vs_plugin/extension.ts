@@ -296,8 +296,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         if (flags & this.ERROR_FLAG) {
             const packet = this.parsePacket(msg);
-            const errorMessage = packet.payload.toString('utf8');
-            if (type !== this.FILE_INFO && (type !== this.READ_FILE || !errorMessage.includes(".vscode"))) {
+            const errorMessage = packet.payload.toString('utf8', 0, packet.payload.length - 1);
+            if (type !== this.FILE_INFO && type !== this.READ_FILE) {
                 vscode.window.showErrorMessage(`UDP FS Error: ${errorMessage}`);
             }
 

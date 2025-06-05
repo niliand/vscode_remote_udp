@@ -79,6 +79,11 @@ struct SessionData {
     uint16_t    seqNo;
 };
 
+struct SessionDataValue {
+    std::vector<SessionData> packets;
+    std::shared_ptr<bool> erasure_token;
+};
+
 struct SearchResult
 {
     std::string path;

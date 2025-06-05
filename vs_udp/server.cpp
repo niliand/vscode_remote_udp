@@ -29,19 +29,22 @@ using namespace std::chrono_literals; // Enables 1s, 500ms, etc. literals
 static uint8_t iv[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
 static uint8_t key[32];
 
-static std::map<std::string, std::vector<SessionData>> writeData;
+static std::map<std::string, SessionDataValue> writeData;
 
 static void reply_error(int sockfd, const struct sockaddr_in &cliaddr, socklen_t len, uint8_t type, const char *msg, AESCipher &cipher);
 static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
                          const struct sockaddr *dest_addr, socklen_t addrlen, AESCipher &cipher);
 // static std::string hex_dump(const void *data, size_t size);
-void writeDataCleaupTask(std::string path)
+void writeDataCleaupTask(std::string path, std::weak_ptr<bool> token_weak_ptr)
 {
     // wait 7 seconds - max wait time for file saving
     std::this_thread::sleep_for(std::chrono::seconds(7));
 
-    // cleaup
-    writeData.erase(path);
+    if (token_weak_ptr.lock())
+    {
+        // cleaup
+        writeData.erase(path);
+    }
 }
 
 std::pair<std::string, std::string> splitPathAndMask(const std::string &input)
@@ -493,20 +496,26 @@ int main()
         {
             std::cout << "Processing WRITE_FILE request for URI: " << hdr->uri << ", seqNo: " << hdr->seqNo << std::endl;
 
-            /*
+            bool firstPacket = false;
             if (!writeData.count(file_path))
             {
-                // not yet data for this file - start cleanup task in case the last packet will be lost
-                std::thread t1(writeDataCleaupTask, std::string(file_path));
-                t1.detach();
+                // not yet data for this file
+                firstPacket = true;
             }
-            */
 
             SessionData data;
             memcpy(data.buffer, recv_buffer + sizeof(packet_hdr), hdr->length);
             data.length = hdr->length;
             data.seqNo = hdr->seqNo;
-            writeData[file_path].push_back(data);
+            writeData[file_path].packets.push_back(data);
+
+            if (firstPacket)
+            {
+                // not yet data for this file - start cleanup task in case the last packet will be lost
+                writeData[file_path].erasure_token = std::make_shared<bool>(true);
+                std::thread t1(writeDataCleaupTask, std::string(file_path), std::weak_ptr<bool>(writeData[file_path].erasure_token));
+                t1.detach();
+            }
 
             if (hdr->flags & PacketFlags::LAST_DATA)
             {
@@ -517,7 +526,7 @@ int main()
                                {
                                    std::this_thread::sleep_for(500ms); // 0.5 second delay
                                    // write file
-                                   std::vector<SessionData> &packets = writeData[path];
+                                   std::vector<SessionData> &packets = writeData[path].packets;
 
                                    // Sort in ascending order by seqNo
                                    std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
