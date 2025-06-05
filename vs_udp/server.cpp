@@ -35,6 +35,14 @@ static void reply_error(int sockfd, const struct sockaddr_in &cliaddr, socklen_t
 static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
                          const struct sockaddr *dest_addr, socklen_t addrlen, AESCipher &cipher);
 // static std::string hex_dump(const void *data, size_t size);
+void writeDataCleaupTask(std::string path)
+{
+    // wait 7 seconds - max wait time for file saving
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+
+    // cleaup
+    writeData.erase(path);
+}
 
 std::pair<std::string, std::string> splitPathAndMask(const std::string &input)
 {
@@ -485,6 +493,15 @@ int main()
         {
             std::cout << "Processing WRITE_FILE request for URI: " << hdr->uri << ", seqNo: " << hdr->seqNo << std::endl;
 
+            /*
+            if (!writeData.count(file_path))
+            {
+                // not yet data for this file - start cleanup task in case the last packet will be lost
+                std::thread t1(writeDataCleaupTask, std::string(file_path));
+                t1.detach();
+            }
+            */
+
             SessionData data;
             memcpy(data.buffer, recv_buffer + sizeof(packet_hdr), hdr->length);
             data.length = hdr->length;
@@ -495,64 +512,65 @@ int main()
             {
                 std::string path(file_path);
                 // save asynchronously with a delay in case some remaining packets can be received
-                std::future<int> futureSave = std::async(std::launch::async, [path]() -> int
-                                                         {
-                                                             std::this_thread::sleep_for(500ms); // 0.5 second delay
-                                                             // write file
-                                                             std::vector<SessionData> &packets = writeData[path];
+                std::future<int> futureSave =
+                    std::async(std::launch::async, [path]() -> int
+                               {
+                                   std::this_thread::sleep_for(500ms); // 0.5 second delay
+                                   // write file
+                                   std::vector<SessionData> &packets = writeData[path];
 
-                                                             // Sort in ascending order by seqNo
-                                                             std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
-                                                                       { return a.seqNo < b.seqNo; });
+                                   // Sort in ascending order by seqNo
+                                   std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
+                                             { return a.seqNo < b.seqNo; });
 
-                                                             uint16_t seq = 0;
-                                                             bool ok = true;
-                                                             for (const SessionData &packet : packets)
-                                                             {
-                                                                 if (packet.seqNo != seq)
-                                                                 {
-                                                                     std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
-                                                                     ok = false;
-                                                                     break;
-                                                                 }
-                                                                 ++seq;
-                                                             }
+                                   uint16_t seq = 0;
+                                   bool ok = true;
+                                   for (const SessionData &packet : packets)
+                                   {
+                                       if (packet.seqNo != seq)
+                                       {
+                                           std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
+                                           ok = false;
+                                           break;
+                                       }
+                                       ++seq;
+                                   }
 
-                                                             if (!ok)
-                                                             {
-                                                                 writeData.erase(path);
-                                                                 return 1;
-                                                             }
+                                   if (!ok)
+                                   {
+                                       writeData.erase(path);
+                                       return 1;
+                                   }
 
-                                                             // open file for write and append, or create file
-                                                             std::ofstream outFile;
-                                                             outFile.open(path, std::ios::binary | std::ios::trunc);
-                                                             if (!outFile)
-                                                             {
-                                                                 std::cerr << "Failed to open file for writing: " << path << std::endl;
-                                                                 return 2;
-                                                             }
+                                   // open file for write and append, or create file
+                                   std::ofstream outFile;
+                                   outFile.open(path, std::ios::binary | std::ios::trunc);
+                                   if (!outFile)
+                                   {
+                                       std::cerr << "Failed to open file for writing: " << path << std::endl;
+                                       return 2;
+                                   }
 
-                                                             seq = 0;
-                                                             for (const SessionData &packet : packets)
-                                                             {
-                                                                 if (packet.seqNo != seq)
-                                                                 {
-                                                                     std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
-                                                                     return 3;
-                                                                 }
+                                   seq = 0;
+                                   for (const SessionData &packet : packets)
+                                   {
+                                       if (packet.seqNo != seq)
+                                       {
+                                           std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
+                                           return 3;
+                                       }
 
-                                                                 ++seq;
+                                       ++seq;
 
-                                                                 outFile.write(reinterpret_cast<const char *>(packet.buffer), packet.length);
-                                                             }
+                                       outFile.write(reinterpret_cast<const char *>(packet.buffer), packet.length);
+                                   }
 
-                                                             outFile.close();
+                                   outFile.close();
 
-                                                             writeData.erase(path);
+                                   writeData.erase(path);
 
-                                                             return 0; // Return a value
-                                                         });
+                                   return 0; // Return a value
+                               });
 
                 int result = futureSave.get(); // Wait for the third lambda and get its result
                 if (0 == result)

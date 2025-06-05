@@ -552,7 +552,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     this.pendingRequests.delete(reqId);
                     reject(new Error('Timeout waiting for writeFile ACK'));
                 }
-            }, 3000);
+            }, 7000);
         });
 
     }
@@ -689,7 +689,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     this.pendingMulti.delete(reqId);
                     reject(new Error('UDP readFile timeout'));
                 }
-            }, 5000);
+            }, 7000);
         });
     }
 
@@ -1145,6 +1145,7 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(message => {
             if (message.command === 'startSearch') {
                 const { searchText, fileMask, caseSensitive, wholeWord } = message;
+                console.log(`startSearch searchText=[${searchText}], fileMask=[${fileMask}]`);
 
                 if (!fileMask) {
                     vscode.window.showErrorMessage(`File mask is empty.`);
@@ -1157,11 +1158,25 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
                     vscode.window.showInformationMessage(`Searching for ${fileMask}`);
                 }
 
-                this.startSearch(searchText, fileMask, caseSensitive, wholeWord)
+                if (searchText) {
+                    this.startSearch(searchText, fileMask, caseSensitive, wholeWord);
+                } else {
+                    this.startSearchFiles(fileMask, webviewView);
+                }
             } else if (message.command === 'openFolder') {
                 void vscode.commands.executeCommand('udpfs.openRootFolder', ...(message.args || []));
+            } else if (message.command === 'openFile') {
+                const fileUri = vscode.Uri.file(message.path);
+                vscode.workspace.openTextDocument(fileUri).then(doc => {
+                    vscode.window.showTextDocument(doc).then(editor => {
+                        //const pos = new vscode.Position(message.line - 1, 0);
+                        //editor.selection = new vscode.Selection(pos, pos);
+                        //editor.revealRange(new vscode.Range(pos, pos));
+                    });
+                });
             }
         });
+
     }
 
     private startSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
@@ -1169,10 +1184,29 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
         void this.doSearch(searchText, fileMask, caseSensitive, wholeWord);
     }
 
+    private startSearchFiles(fileMask: string, webviewView: vscode.WebviewView) {
+        void this.doSearchFiles(fileMask, webviewView);
+    }
+
     private async doSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
         try {
             const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask, caseSensitive, wholeWord);
             showSearchResultsInWebview(results, searchText ?? '');
+        } catch (err) {
+            console.error('Search error:', err);
+        }
+    }
+
+    private async doSearchFiles(fileMask: string, webviewView: vscode.WebviewView) {
+        try {
+            const results = await this.udpFs.searchTextInUdpfs('', '*' + fileMask + '*', false, false);
+            webviewView.webview.postMessage({
+                command: 'updateFileList',
+                files: results.map(obj => ({
+                    path: obj.uri.path,
+                    name: obj.uri.path.slice(controller.getFolderPath().length + 1),
+                }))
+            });
         } catch (err) {
             console.error('Search error:', err);
         }
@@ -1264,6 +1298,22 @@ button.full-width:hover {
   background-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }   
+
+  #fileList {
+    list-style: none;
+    padding: 0;
+  }
+  #fileList li {
+    margin-bottom: 4px;
+  }
+  #fileList a {
+    color: var(--vscode-textLink-foreground);
+    text-decoration: none;
+  }
+  #fileList a:hover {
+    text-decoration: underline;
+  }
+
   </style>
 </head>
 <body>
@@ -1281,7 +1331,8 @@ button.full-width:hover {
 
   <br> <br><hr> <br>
   <input id="fileMask2" placeholder="File mask (e.g. user*)" />
-  <button class="full-width" onclick="startSearchFiles()">Search filenames</button>
+  
+  <ul id="fileList"></ul>
 
   <script>
     const vscode = acquireVsCodeApi();
@@ -1298,7 +1349,7 @@ button.full-width:hover {
   });    
 
   const openFolderBtn = document.getElementById('openFolderBtn');
-  console.log('openFolderBtn=', openFolderBtn);
+  
   openFolderBtn.addEventListener('click', () => {
     vscode.postMessage({ command: 'openFolder' });
   });
@@ -1311,11 +1362,49 @@ button.full-width:hover {
       vscode.postMessage({ command: 'startSearch', searchText, fileMask, caseSensitive, wholeWord });
     }
 
-    function startSearchFiles() {
+  const inputFiles = document.getElementById('fileMask2');
+  let debounceTimeout;
+
+  inputFiles.addEventListener('input', () => {
+    clearTimeout(debounceTimeout); // Reset timer on every keystroke
+
+    debounceTimeout = setTimeout(() => {
+      const fileMask = inputFiles.value;
       const searchText = '';
-      const fileMask = document.getElementById('fileMask2').value;
-      vscode.postMessage({ command: 'startSearch', searchText, fileMask });
+      if (fileMask) {
+         vscode.postMessage({ command: 'startSearch', searchText, fileMask });
+      }
+    }, 500); // 500ms delay
+  });
+
+window.addEventListener('message', event => {
+    const message = event.data;
+    if (message.command === 'updateFileList') {
+      updateFileList(message.files);
     }
+  });
+
+  function updateFileList(files) {
+    const list = document.getElementById('fileList');
+    list.innerHTML = ''; // clear existing
+
+    files.forEach(file => {
+      const item = document.createElement('li');
+
+      const link = document.createElement('a');
+      link.href = '#';
+      link.textContent = file.name;
+      link.onclick = () => {
+        vscode.postMessage({
+          command: 'openFile',
+          path: file.path
+        });
+      };
+
+      item.appendChild(link);
+      list.appendChild(item);
+    });
+  }
 
   </script>
 </body>
