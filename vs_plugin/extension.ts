@@ -1194,7 +1194,7 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
             } else if (message.command === 'openFolder') {
                 void vscode.commands.executeCommand('udpfs.openRootFolder', ...(message.args || []));
             } else if (message.command === 'openFile') {
-                const fileUri = vscode.Uri.file(message.path);
+                const fileUri = vscode.Uri.parse('udpfs://' + message.path);
                 vscode.workspace.openTextDocument(fileUri).then(doc => {
                     vscode.window.showTextDocument(doc).then(editor => {
                         //const pos = new vscode.Position(message.line - 1, 0);
