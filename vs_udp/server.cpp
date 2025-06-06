@@ -95,7 +95,7 @@ std::string to_lower(const std::string &s)
     return lower;
 }
 
-void search_in_file(const fs::path &file_path, const std::string &search_text, bool case_sensitive, bool whole_word, std::vector<SearchResult> &results)
+void search_in_file(const fs::path &file_path, const std::string &search_text, bool case_sensitive, bool whole_word, bool regex, std::vector<SearchResult> &results)
 {
     std::ifstream file(file_path);
     if (!file.is_open())
@@ -104,14 +104,32 @@ void search_in_file(const fs::path &file_path, const std::string &search_text, b
     std::string line;
     uint16_t line_number = 0;
 
-    // Prepare regex if whole_word is set
-    std::regex word_regex;
-    if (whole_word)
+    std::regex compiled_regex;
+    bool use_regex = false;
+
+    try
     {
-        std::string pattern = "\\b" + search_text + "\\b";
-        word_regex = case_sensitive
-                         ? std::regex(pattern)
-                         : std::regex(pattern, std::regex_constants::icase);
+        if (regex)
+        {
+            compiled_regex = case_sensitive
+                                 ? std::regex(search_text)
+                                 : std::regex(search_text, std::regex_constants::icase);
+            use_regex = true;
+        }
+        else if (whole_word)
+        {
+            std::string pattern = "\\b" + search_text + "\\b";
+            compiled_regex = case_sensitive
+                                 ? std::regex(pattern)
+                                 : std::regex(pattern, std::regex_constants::icase);
+            use_regex = true;
+        }
+    }
+    catch (const std::regex_error &e)
+    {
+        std::cerr << "Invalid regex pattern: " << search_text << " (" << e.what() << ")\n";
+        results.push_back({file_path, std::string("Invalid regex pattern: ") + search_text + " (" + e.what() + ")", 0});
+        return;
     }
 
     while (std::getline(file, line))
@@ -119,9 +137,9 @@ void search_in_file(const fs::path &file_path, const std::string &search_text, b
         ++line_number;
         bool match = false;
 
-        if (whole_word)
+        if (use_regex)
         {
-            match = std::regex_search(line, word_regex);
+            match = std::regex_search(line, compiled_regex);
         }
         else
         {
@@ -139,8 +157,7 @@ void search_in_file(const fs::path &file_path, const std::string &search_text, b
 
         if (line_number == 0xFFFF)
         {
-            // max line number is 65535 for now
-            break;
+            break; // max line number is 65535 for now
         }
     }
 }
@@ -200,7 +217,7 @@ bool isExcluded(const fs::path &path, const std::vector<std::regex> &excludes)
 }
 
 void search_files(const std::string &root_dir, const std::string &file_mask, const std::string &search_text,
-                  std::vector<std::regex> &excludes, bool case_sens, bool whole_word, std::vector<SearchResult> &results)
+                  std::vector<std::regex> &excludes, bool case_sens, bool whole_word, bool regex, std::vector<SearchResult> &results)
 {
     std::regex file_regex = wildcard_to_regex(file_mask);
 
@@ -228,7 +245,7 @@ void search_files(const std::string &root_dir, const std::string &file_mask, con
                 {
                     if (search_text.length() > 0)
                     {
-                        search_in_file(entry.path(), search_text, case_sens, whole_word, results);
+                        search_in_file(entry.path(), search_text, case_sens, whole_word, regex, results);
                     }
                     else
                     {
@@ -862,6 +879,7 @@ int main()
 
             bool case_sens = hdr->flags & PacketFlags::CASE_SENSITIVE;
             bool whole_word = hdr->flags & PacketFlags::WHOLE_WORD;
+            bool regex = hdr->flags & PacketFlags::REGEX;
 
             std::cout << "SEARCH_FILES: mask=" << mask << ", pattern=" << pattern << ", in " << file_path << "\n";
             for (const auto &ex : excludes)
@@ -887,7 +905,7 @@ int main()
             } else {
                 maskStr = "*" + maskStr + "*";
             }
-            search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, results);
+            search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, regex, results);
 
             send_hdr->flags = 0;
 

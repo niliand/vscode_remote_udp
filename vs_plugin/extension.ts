@@ -217,6 +217,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly FIRST_DATA = 0x04;
     private readonly CASE_SENSITIVE = 0x08;
     private readonly WHOLE_WORD = 0x10;
+    private readonly REGEX_WORD = 0x20;
 
     private iv = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex'); // 16-byte IV
     private key!: Buffer;
@@ -950,7 +951,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
-    public sendSearchFilesReq(pattern: string, mask: string, excludes: string[], caseSensitive: boolean, wholeWord: boolean): Promise<MultiReqData[]> {
+    public sendSearchFilesReq(pattern: string, mask: string, excludes: string[], caseSensitive: boolean, wholeWord: boolean, regex: boolean): Promise<MultiReqData[]> {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
 
         const reqId = this.getReqId();
@@ -964,6 +965,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             flags += this.CASE_SENSITIVE;
         if (wholeWord)
             flags += this.WHOLE_WORD;
+        if (regex)
+            flags += this.REGEX_WORD;
         buffer.writeUInt16BE(flags, offset); offset += 2; // flags (big-endian)
 
         // Write URI string into buffer
@@ -1025,7 +1028,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
-    public searchTextInUdpfs(pattern: string, mask: string, caseSensitive: boolean = true, wholeWord: boolean = false): Promise<SearchResult[]> {
+    public searchTextInUdpfs(pattern: string, mask: string, 
+             caseSensitive: boolean = true, wholeWord: boolean = false, regex: boolean = false): Promise<SearchResult[]> {
 
         if (!controller.getFolderPath()) {
             vscode.window.showErrorMessage(`UDP FS: Folder is not opened`);
@@ -1040,7 +1044,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             .filter(([_, enabled]) => enabled)
             .map(([pattern]) => pattern);
 
-        return this.sendSearchFilesReq(pattern, mask, excludesArr, caseSensitive, wholeWord).then(chunks => {
+        return this.sendSearchFilesReq(pattern, mask, excludesArr, caseSensitive, wholeWord, regex).then(chunks => {
             const items: SearchResult[] = [];
 
             // no need to sort search result
@@ -1182,7 +1186,7 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(message => {
             if (message.command === 'startSearch') {
-                const { searchText, fileMask, caseSensitive, wholeWord } = message;
+                const { searchText, fileMask, caseSensitive, wholeWord, regex } = message;
                 console.log(`startSearch searchText=[${searchText}], fileMask=[${fileMask}]`);
 
                 if (!fileMask) {
@@ -1197,7 +1201,7 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
                 }
 
                 if (searchText) {
-                    this.startSearch(searchText, fileMask, caseSensitive, wholeWord);
+                    this.startSearch(searchText, fileMask, caseSensitive, wholeWord, regex);
                 } else {
                     this.startSearchFiles(fileMask);
                 }
@@ -1232,18 +1236,18 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private startSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
+    private startSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean, regex: boolean) {
         // Fire-and-forget async call
-        void this.doSearch(searchText, fileMask, caseSensitive, wholeWord);
+        void this.doSearch(searchText, fileMask, caseSensitive, wholeWord, regex);
     }
 
     private startSearchFiles(fileMask: string) {
         void this.doSearchFiles(fileMask);
     }
 
-    private async doSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean) {
+    private async doSearch(searchText: string, fileMask: string, caseSensitive: boolean, wholeWord: boolean, regex: boolean) {
         try {
-            const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask, caseSensitive, wholeWord);
+            const results = await this.udpFs.searchTextInUdpfs(searchText ?? '', fileMask, caseSensitive, wholeWord, regex);
 
             this._view?.webview.postMessage({
                 command: 'textSearchFinished'
@@ -1415,6 +1419,7 @@ button.full-width:hover {
   <input id="searchText" placeholder="Search text" />
   <button class="toggle-button" id="caseToggle">Aa</button>
   <button class="toggle-button" id="wordToggle">W</button>
+  <button class="toggle-button" id="regexToggle">.*</button>
 </div>
 
   <input id="fileMask" placeholder="File mask (e.g. *.ts)" />
@@ -1437,6 +1442,7 @@ button.full-width:hover {
 
   const caseBtn = document.getElementById('caseToggle');
   const wordBtn = document.getElementById('wordToggle');
+  const regexBtn = document.getElementById('regexToggle');
 
   caseBtn.addEventListener('click', () => {
     caseBtn.classList.toggle('active');
@@ -1445,6 +1451,10 @@ button.full-width:hover {
   wordBtn.addEventListener('click', () => {
     wordBtn.classList.toggle('active');
   });    
+
+  regexBtn.addEventListener('click', () => {
+    regexBtn.classList.toggle('active');
+  }); 
 
   const openFolderBtn = document.getElementById('openFolderBtn');
   
@@ -1456,11 +1466,12 @@ button.full-width:hover {
       const searchText = document.getElementById('searchText').value;
       const caseSensitive = caseBtn.classList.contains('active');
       const wholeWord = wordBtn.classList.contains('active');
+      const regex = regexBtn.classList.contains('active');
       const fileMask = document.getElementById('fileMask').value;
     
       document.getElementById('searchTextBtn').style.display = 'none';
       document.getElementById('progressBarContainerText').style.display = 'block';
-      vscode.postMessage({ command: 'startSearch', searchText, fileMask, caseSensitive, wholeWord });
+      vscode.postMessage({ command: 'startSearch', searchText, fileMask, caseSensitive, wholeWord, regex });
     }
 
   const inputFiles = document.getElementById('fileMask2');

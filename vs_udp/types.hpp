@@ -21,6 +21,7 @@ enum PacketFlags {
     FIRST_DATA = 0x04,    // first packet
     CASE_SENSITIVE = 0x08,
     WHOLE_WORD = 0x10,
+    REGEX = 0x20,
 };
 
 struct packet_hdr {

@@ -9,6 +9,9 @@
 - Requires a custom **UDP server** running on the target machine
 - Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider allows you to continue editing opened files even if network issues occur.
 
+### To install server
+- Visit https://github.com/niliand/vscode_remote_udp/ for details
+
 ### How to use extension
 - Edit your settings.json and add fields listed below (hostname and key)
 - Find and click UDPFS icon in the left pane
@@ -41,5 +44,3 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 - Doesn't monitor external file changes; updates made outside the editor won't be reloaded.
 - NOTE: it is expected that some operations like read or save file can show error - just try again later. It is due to network loses / delays.
 
-### To install server
-- Visit https://github.com/niliand/vscode_remote_udp/ for details
