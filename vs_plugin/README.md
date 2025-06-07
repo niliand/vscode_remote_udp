@@ -7,7 +7,8 @@
 - Uses **UDP** instead of TCP for improved resilience in unstable network conditions  
 - Employs **AES encryption** for secure traffic  
 - Requires a custom **UDP server** running on the target machine
-- Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider allows you to continue editing opened files even if network issues occur.
+- Supports **CTAGS**
+- Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider doesn't require it
 
 ### To install server
 - Visit https://github.com/niliand/vscode_remote_udp/ for details
@@ -42,5 +43,5 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 - Max path limited to 254 symbols (fits the most cases)
 - Doesn't support big files over 45 Mb
 - Doesn't monitor external file changes; updates made outside the editor won't be reloaded.
-- NOTE: it is expected that some operations like read or save file can show error - just try again later. It is due to network loses / delays.
+- NOTE: it is expected that some operations like open or save file can show error - just try again later. It is due to network loses / delays.
 

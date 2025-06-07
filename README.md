@@ -10,7 +10,8 @@
 - Uses **UDP** instead of TCP for improved resilience in unstable network conditions  
 - Employs **AES encryption** for secure traffic  
 - Requires a custom **UDP server** running on the target machine
-- Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider allows you to continue editing opened files even if network issues occur.
+- Supports **CTAGS**
+- Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider doesn't require it
 
 ---
 
@@ -34,6 +35,7 @@ Build server:
 git clone https://github.com/niliand/vscode_remote_udp.git
 cd vscode_remote_udp/vs_udp/
 make
+chmod 600 config.txt
 ~~~
 !! edit **config.txt** to define your own key string !!
 
@@ -58,8 +60,14 @@ sudo firewall-cmd --permanent --add-port=9022/udp
 sudo firewall-cmd --reload
 ~~~
 
-
-
+### Setup CTAGS
+**ctags** tool is used to quickly find method or type definition. It is used for "**UDP FS: Find definition**" contex menu during file editing.
+- Install ctags:  
+  Debian/Ubuntu: sudo snap install universal-ctags  
+  Or visit: https://github.com/universal-ctags/ctags?tab=readme-ov-file
+- Run in the project root folder:  
+  ctags -R -f .tags  
+  add --exclude=some_folder to exclude some unrelated folders
 
 ## How-to config VScode using settings.json ###
 Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settings (JSON)" and add following lines:
@@ -72,7 +80,7 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 ~~~
 
 ## How to use extension
-- You can install extension from the Extension Store or using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
+- You can install extension from the Extension Marketplace or using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
 - In VSCode select Extensions, either find "Remote UDP FS Provide" in the list, or Select [...] icon at the top and item "Install from VSIX..."
 - Edit your configuration file and add fields listed above (hostname and key)
 - Find and click UDPFS icon in the left pane

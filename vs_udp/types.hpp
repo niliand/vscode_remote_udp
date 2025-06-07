@@ -13,6 +13,7 @@ enum PacketType {
     CREATE_DIRECTORY,
     RENAME_FILE,
     SEARCH_FILES,     // search files or text in files
+    SEARCH_DEFINITION,
 };
 
 enum PacketFlags {

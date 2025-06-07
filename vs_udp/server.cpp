@@ -266,6 +266,46 @@ void search_files(const std::string &root_dir, const std::string &file_mask, con
     }
 }
 
+std::vector<std::string> grep_tags(const std::string &filename, const std::string &pattern)
+{
+    std::vector<std::string> matching_lines;
+    std::ifstream file(filename);
+
+    // Check if the file was opened successfully
+    if (!file.is_open())
+    {
+        std::cerr << "Error: Could not open file '" << filename << "'" << std::endl;
+        return matching_lines; // Return empty vector on error
+    }
+
+    size_t pattern_end_index = pattern.length();
+
+    std::string line;
+    // Read the file line by line
+    while (std::getline(file, line))
+    {
+        // 1. Check if the line starts with the exact pattern
+        // `rfind(pattern, 0)` is an efficient way to check if a string starts with a substring.
+        if (line.rfind(pattern, 0) == 0)
+        {
+            // The pattern is found at the beginning of the line.
+
+            if (pattern_end_index < line.length())
+            {
+                char char_after_pattern = line[pattern_end_index];
+
+                if (char_after_pattern == '\t')
+                {
+                    matching_lines.push_back(line);
+                }
+            }
+        }
+    }
+
+    file.close(); // Close the file stream
+    return matching_lines;
+}
+
 // Convert file time to ISO 8601 string (UTC)
 std::string file_time_to_iso(const fs::file_time_type &ftime)
 {
@@ -902,7 +942,9 @@ int main()
             if (maskStr.empty())
             {
                 maskStr = "*";
-            } else {
+            }
+            else
+            {
                 maskStr = "*" + maskStr + "*";
             }
             search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, regex, results);
@@ -980,6 +1022,91 @@ int main()
                 std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
             }
         }
+        else if (hdr->type == PacketType::SEARCH_DEFINITION)
+        {
+            char pattern[255] = {0};
+
+            uint8_t *p = recv_buffer + sizeof(packet_hdr);
+            uint8_t patternLen = *p;
+            ++p;
+            memcpy(pattern, p, patternLen);
+            p += patternLen;
+
+            std::cout << "SEARCH_DEFINITION: pattern=" << pattern << ", in " << file_path << "/.tags \n";
+
+            std::string path = std::string(file_path) + "/.tags";
+
+            if (!fs::exists(path))
+            {
+                std::cerr << "Path " << path << " does not exist.\n";
+                reply_error(sockfd, client_addr, addr_len, hdr->type, "'.tags' is not exists, run: ctags -R -f .tags", cipher);
+                continue; // Skip processing this packet
+            }
+
+            std::vector<std::string> results = grep_tags(path, pattern);
+
+            send_hdr->flags = 0;
+
+            // total(1), line_len (1), line (1..255)
+
+            size_t count = 0; // inside one packet
+            size_t added = 0; // total
+            uint16_t seqNo = 0;
+            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
+            size_t packed = 1; // first byte is num of entries
+            p = send_buffer + sizeof(packet_hdr) + 1;
+            for (const auto &r : results)
+            {
+                size_t entryLen = r.length() + 1; 
+
+                if ((packed + entryLen) > maxSize)
+                {
+                    // cannot pack next - send packet
+                    p = send_buffer + sizeof(packet_hdr);
+                    *p = count;
+                    ++p;
+                    send_hdr->length = htons(packed + 1);
+                    send_hdr->seqNo = htons(seqNo++);
+                    if (added == results.size())
+                    {
+                        send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    }
+                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+
+                    count = 0;
+                    packed = 1;
+                }
+                *p = r.length();
+                ++p;
+                memcpy(p, r.c_str(), r.length());
+                p += r.length();
+
+                packed += (1 + r.length());
+
+                ++count;
+                ++added;
+            }
+
+            if (count > 0 || results.empty())
+            {
+                // send rest
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+                // set count:
+                p = send_buffer + sizeof(packet_hdr);
+                *p = count;
+
+                send_hdr->length = htons(packed + 1);
+                send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                send_hdr->seqNo = htons(seqNo++);
+                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                              (const struct sockaddr *)&client_addr, addr_len, cipher);
+                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
+            }
+        }
+
         else
         {
             std::cerr << "Unknown packet type received" << std::endl;

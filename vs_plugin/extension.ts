@@ -116,6 +116,29 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand('udpfs.findDefinition', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor) {
+                const selection = editor.selection;
+                const selectedText = editor.document.getText(selection);
+
+                const results = await udpFs.searchDefinitionInUdpfs(selectedText);
+                if (results.length == 1) {
+                    const [definition, path, pattern] = results[0].split('\t');
+                    const uri = 'udpfs://' + controller.getFolderPath() + '/' + path;
+                    const patStr = pattern.replace(/^\/\^?/, '').replace(/\$?\/;".*$/, '');
+                    openFileAtSymbol(vscode.Uri.parse(uri), patStr);
+
+                } else {
+                    showDefinitionResultsInWebview(results, selectedText);
+                }
+
+                //vscode.window.showInformationMessage(`Selected: ${selectedText}`);
+            }
+        })
+    );
+
     // const savedFavorites = context.globalState.get<string[]>(FAVORITES_KEY, []);
     // for (const uriString of savedFavorites) {
     //     const uri = vscode.Uri.parse(uriString);
@@ -206,6 +229,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly CREATE_DIRECTORY = 5;
     private readonly RENAME_FILE = 6;
     private readonly SEARCH_FILES = 7;
+    private readonly SEARCH_DEFINITION = 8;
 
     private readonly SERVER_PORT = 9022;
     private SERVER_HOST = '127.0.0.1';
@@ -311,7 +335,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         }
 
-        if (type === this.READ_FILE || type === this.LIST_FILES || type === this.SEARCH_FILES) {
+        if (type === this.READ_FILE || type === this.LIST_FILES || type === this.SEARCH_FILES || type === this.SEARCH_DEFINITION) {
             const pending = this.pendingMulti.get(reqId);
             const packet = this.parsePacket(msg);
             if (pending) {
@@ -364,7 +388,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         return this.sendRequestStat(uri).then((buffer) => {
             const packet = this.parsePacket(buffer);
             const fileInfo = this.parseFileInfo(packet.payload);
-            console.log('File info:', fileInfo);
+
             return {
                 type: fileInfo.type === 1 ? vscode.FileType.File : vscode.FileType.Directory,
                 size: fileInfo.size,
@@ -394,7 +418,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             }
         }
 
-        // TODO: Request directory listing over UDP
         return this.sendRequestReadDir(uri).then(chunks => {
 
             console.log('readDirectory num packets: ', chunks.length);
@@ -438,15 +461,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
                     items.push([name, fileType]);
                 }
-
-                // for (let offset = 0; (offset + itemSize) <= chunk.buffer.length; offset += itemSize) {
-                //     const type = chunk.buffer.readUInt8(offset);
-                //     const nameBuf = chunk.buffer.slice(offset + 1, offset + 33);
-                //     const name = this.bufferToNullTerminatedString(nameBuf);
-                //     //const name = nameBuf.toString('utf8').replace(/\0.*$/, ''); // Remove null terminator and trailing nulls
-
-                //     items.push([name, type]);
-                // }
             }
 
             return items;
@@ -989,8 +1003,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         let remainSize = this.MAX_PACKET_SIZE - packetTmp.length;
 
         const buffers = excludes.map(str => {
-            if (str.length <= 255 && remainSize > (str.length + 1)) {
-                const strBuf = Buffer.from(str, 'utf8');
+            const strBuf = Buffer.from(str, 'utf8');
+            if (strBuf.length <= 255 && remainSize > (strBuf.length + 1)) {
                 const lenBuf = Buffer.from([strBuf.length]); // 1-byte length
                 remainSize += strBuf.length + 1;
                 return Buffer.concat([lenBuf, strBuf]);
@@ -1028,8 +1042,60 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
-    public searchTextInUdpfs(pattern: string, mask: string, 
-             caseSensitive: boolean = true, wholeWord: boolean = false, regex: boolean = false): Promise<SearchResult[]> {
+    public sendSearchDefinitionReq(pattern: string): Promise<MultiReqData[]> {
+        const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
+
+        const reqId = this.getReqId();
+
+        // Fill header fields
+        let offset = 0;
+        buffer.writeUInt8(this.version, offset++);            // version
+        buffer.writeUInt8(this.SEARCH_DEFINITION, offset++);               // type
+        let flags = 0;
+        buffer.writeUInt16BE(flags, offset); offset += 2; // flags (big-endian)
+
+        // Write URI string into buffer
+        const uriStr = controller.getFolderPath();
+        const uriBytes = Buffer.from(uriStr, 'utf8');
+        uriBytes.copy(buffer, offset);
+        offset += 255; // move past URI (rest will be zero-padded automatically)
+
+        const patternBytes = Buffer.from(pattern, 'utf8');
+        const patternLenBuf = Buffer.alloc(1, patternBytes.length);
+
+        buffer.writeUInt16BE(patternBytes.length + 2, offset); offset += 2; // length
+        buffer.writeUInt16BE(reqId, offset); offset += 2;
+        buffer.writeUInt16BE(0, offset); offset += 2;  // seq no
+
+        const packet = Buffer.concat([buffer, patternLenBuf, patternBytes]);
+
+        return new Promise((resolve, reject) => {
+
+            this.pendingMulti.set(reqId, {
+                resolve,
+                reject,
+                chunks: []
+            });
+
+            // Send packet
+            this.udpClient.send(this.encrypt(packet), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+            });
+
+            setTimeout(() => {
+                if (this.pendingMulti.has(reqId)) {
+                    this.pendingMulti.delete(reqId);
+                    reject(new Error('UDP search definition timeout'));
+                }
+            }, 5000);
+        });
+    }
+
+
+    public searchTextInUdpfs(pattern: string, mask: string,
+        caseSensitive: boolean = true, wholeWord: boolean = false, regex: boolean = false): Promise<SearchResult[]> {
 
         if (!controller.getFolderPath()) {
             vscode.window.showErrorMessage(`UDP FS: Folder is not opened`);
@@ -1082,20 +1148,129 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
             return items;
         });
-
-
-        // const results: SearchResult[] = [];
-
-        // results.push({ uri: vscode.Uri.parse('udpfs:///Users/sergeycherepnin/test2/res.txt'), line: 2, match: 'Applications' });
-        // results.push({ uri: vscode.Uri.parse('udpfs:///Users/sergeycherepnin/test2/res.txt'), line: 9, match: 'Applications' });
-
-
-        // return Promise.resolve(results);
     }
+
+    public searchDefinitionInUdpfs(pattern: string): Promise<string[]> {
+
+        if (!controller.getFolderPath()) {
+            vscode.window.showErrorMessage(`UDP FS: Folder is not opened`);
+            return Promise.resolve([]);
+        }
+
+        return this.sendSearchDefinitionReq(pattern).then(chunks => {
+            const items: string[] = [];
+
+            // no need to sort search result
+            for (const chunk of chunks) {
+                // total(1), text_len (1), text (1..255)
+                let offset = 0;
+                const totalItems = chunk.buffer.readUInt8(offset);
+                offset += 1;
+
+                for (let i = 0; i < totalItems; i++) {
+                    const lineLen = chunk.buffer.readUInt8(offset); offset += 1;
+
+                    if (offset + lineLen > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading filename");
+                    }
+
+                    const line: string = chunk.buffer.toString("utf8", offset, offset + lineLen);
+                    offset += lineLen;
+
+                    console.log(`DEFINITION: ${line}`);
+                    items.push(line);
+                }
+            }
+
+            return items;
+        });
+
+    }
+
 
 
 } //UdpFileSystemProvider
 
+async function openFileAtSymbol(uri: vscode.Uri, pattern: string) {
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(doc);
+
+    // Remove leading/trailing / and ^$ from the pattern
+    //const regex = new RegExp(pattern.replace(/^\/\^?/, '').replace(/\$?\/;".*$/, ''));
+    const regex = new RegExp(pattern);
+
+    //const lineNumber = doc.getText().split('\n').findIndex(line => regex.test(line));
+    const lineNumber = doc.getText().split('\n').findIndex(line => line.indexOf(pattern) != -1);
+    if (lineNumber >= 0) {
+        const position = new vscode.Position(lineNumber, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(new vscode.Range(position, position));
+    } else {
+        vscode.window.showWarningMessage(`Pattern not found in ${uri.fsPath}`);
+    }
+}
+
+function showDefinitionResultsInWebview(results: string[], pattern: string) {
+    const panel = vscode.window.createWebviewPanel(
+        'udpfsSearch',
+        `Search: "${pattern}"`,
+        vscode.ViewColumn.One,
+        { enableScripts: true }
+    );
+
+    const regex = new RegExp(`(${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+
+    const linksHtml = results.length > 0
+        ? results.map(r => {
+            const [definition, path, pattern] = r.split('\t');
+            const uri = 'udpfs://' + controller.getFolderPath() + '/' + path;
+            const patStr = pattern.replace(/^\/\^?/, '').replace(/\$?\/;".*$/, '');
+
+            return `<div>
+          <a href="#" onclick="vscode.postMessage({ command: 'open', uri: '${uri}', pattern: '${patStr}' })" >
+            ${path} 
+          </a> — <code>${escapeHtml(patStr).replace(regex, '<span class="highlight">$1</span>')}</code>
+        </div>`
+        }
+        ).join('')
+        : `<p>No matches found.</p>`;
+
+    panel.webview.html = `
+    <html>
+    <head>
+    <style>
+        .highlight {
+          background-color: var(--vscode-editor-findMatchHighlightBackground, yellow);
+          color: inherit;
+        }
+    </style>
+    </head>
+    <body>
+      <h2>Search Results for <code>${escapeHtml(pattern)}</code></h2>
+      ${linksHtml}
+      <script>
+        const vscode = acquireVsCodeApi();
+        document.querySelectorAll('a').forEach(el => {
+          el.addEventListener('click', e => {
+            e.preventDefault();
+          });
+        });
+      </script>
+    </body>
+    </html>
+  `;
+
+    panel.webview.onDidReceiveMessage(async message => {
+        if (message.command === 'open') {
+            console.log(` open DEF: uri=${message.uri}, pattern=${message.pattern}`);
+            const uri = vscode.Uri.parse(message.uri);
+            const pattern = message.pattern;
+
+            await openFileAtSymbol(uri, pattern);
+        }
+    });
+
+}
 
 function showSearchResultsInWebview(results: SearchResult[], pattern: string) {
     const panel = vscode.window.createWebviewPanel(
@@ -1111,7 +1286,7 @@ function showSearchResultsInWebview(results: SearchResult[], pattern: string) {
         ? results.map(r =>
             `<div>
           <a href="#" onclick="vscode.postMessage({ command: 'open', uri: '${r.uri.toString()}', line: ${r.line > 0 ? r.line - 1 : 1} })">
-            ${r.uri.path}:${r.line > 0 ? r.line : 1}
+            ${r.uri.path.slice(controller.getFolderPath().length + 1)}:${r.line > 0 ? r.line : 1}
           </a> ${r.line > 0 ? '—' : ''} <code>${escapeHtml(r.match).replace(regex, '<span class="highlight">$1</span>')}</code>
         </div>`
         ).join('')
@@ -1135,8 +1310,6 @@ function showSearchResultsInWebview(results: SearchResult[], pattern: string) {
         document.querySelectorAll('a').forEach(el => {
           el.addEventListener('click', e => {
             e.preventDefault();
-            const line = parseInt(el.getAttribute('data-line'), 10);
-            vscode.postMessage({ command: 'open', uri: el.getAttribute('href'), line });
           });
         });
       </script>
@@ -1224,9 +1397,8 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
     public setSearchFolder(folder: string) {
         if (this._view) {
             let _folder = folder;
-            if (_folder.length > controller.getFolderPath().length)
-            {
-               _folder = _folder.slice(controller.getFolderPath().length + 1) + '/';
+            if (_folder.length > controller.getFolderPath().length) {
+                _folder = _folder.slice(controller.getFolderPath().length + 1) + '/';
             }
             else {
                 if (!_folder.endsWith('/'))
@@ -1487,7 +1659,7 @@ button.full-width:hover {
          document.getElementById('progressBarContainer').style.display = 'block';
          vscode.postMessage({ command: 'startSearch', searchText, fileMask });
       }
-    }, 500); // 500ms delay
+    }, 1500); // delay
   });
 
 window.addEventListener('message', event => {
