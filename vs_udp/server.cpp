@@ -16,6 +16,11 @@
 #include <thread>
 #include <future>
 
+#include <fcntl.h>      // open
+#include <unistd.h>     // read, close
+#include <string.h>     // strstr, memchr
+#include <memory.h>
+
 #include <openssl/sha.h> // SHA256
 #include <openssl/evp.h>
 
@@ -264,6 +269,70 @@ void search_files(const std::string &root_dir, const std::string &file_mask, con
         std::cerr << "  Code value: " << ex.code().value() << '\n';
         std::cerr << "  Code message: " << ex.code().message() << '\n';
     }
+}
+
+std::vector<std::string> fast_grep_tags(const std::string &filename, const std::string &pattern)
+{
+    std::vector<std::string> matching_lines;
+    size_t pattern_len = pattern.length();
+    const size_t BUFFER_SIZE = 1 << 20; // 1 MB buffer
+
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        std::cerr << "Error: Could not open file '" << filename << "'" << std::endl;
+        return matching_lines; // Return empty vector on error
+    }
+
+    char* buffer = new char[BUFFER_SIZE + 1]; // +1 for null-terminator
+    size_t leftover_size = 0;
+    char* leftover = new char[BUFFER_SIZE];
+    char* chunk = new char[BUFFER_SIZE + 1];
+
+    ssize_t bytes_read;
+    while ((bytes_read = read(fd, buffer, BUFFER_SIZE)) > 0) {
+        buffer[bytes_read] = '\0'; // Null-terminate
+        size_t total_size = leftover_size + bytes_read;
+
+        // Create a complete buffer with leftover from last read
+        
+        memcpy(chunk, leftover, leftover_size);
+        memcpy(chunk + leftover_size, buffer, bytes_read);
+        chunk[total_size] = '\0';
+
+        // Line by line scan
+        char* start = chunk;
+        while (true) {
+            char* newline = (char*)memchr(start, '\n', chunk + total_size - start);
+            if (!newline) break;
+
+            *newline = '\0'; // Temporarily terminate the line
+            if (strstr((const char*)start, pattern.c_str()) && start[pattern_len] == '\t') {
+                matching_lines.push_back(start);
+            }
+
+            start = newline + 1;
+        }
+
+        // Save leftover bytes for next round
+        leftover_size = chunk + total_size - start;
+        memcpy(leftover, start, leftover_size);
+    }
+
+    delete[] chunk;
+
+    // Handle final leftover (if no newline at end)
+    if (leftover_size > 0) {
+        leftover[leftover_size] = '\0';
+        if (strstr((const char*)leftover, pattern.c_str()) && leftover[pattern_len] == '\t') {
+            matching_lines.push_back(leftover);
+        }
+    }
+
+    delete[] buffer;
+    delete[] leftover;
+    close(fd);
+    return matching_lines;
 }
 
 std::vector<std::string> grep_tags(const std::string &filename, const std::string &pattern)
@@ -1043,7 +1112,7 @@ int main()
                 continue; // Skip processing this packet
             }
 
-            std::vector<std::string> results = grep_tags(path, pattern);
+            std::vector<std::string> results = fast_grep_tags(path, pattern);
 
             send_hdr->flags = 0;
 
