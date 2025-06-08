@@ -621,7 +621,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     this.pendingRequests.delete(reqId);
                     reject(new Error('Timeout waiting for writeFile ACK'));
                 }
-            }, 7000);
+            }, 3000 + content.length / 2000);
         });
 
     }
@@ -729,18 +729,18 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             return;
         }
         for (let i = 0; i < num; i++) {
-             const seqNo = packet.payload.readUInt16BE(offset); offset += 2;
+            const seqNo = packet.payload.readUInt16BE(offset); offset += 2;
 
-             if (seqNo < packets.length) {
-                 const pkt = packets[seqNo];
-                 let flags = 0;
-                 if (i == (num - 1)) {
+            if (seqNo < packets.length) {
+                const pkt = packets[seqNo];
+                let flags = 0;
+                if (i == (num - 1)) {
                     // the last one
                     flags = this.END_OF_TRANSMISSION_FLAG;
-                 }
-                 pkt.writeUInt16BE(flags, 2); // flags
-                 this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
-             }
+                }
+                pkt.writeUInt16BE(flags, 2); // flags
+                this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
+            }
 
         }
     }
@@ -805,6 +805,24 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         return false;
     }
 
+    private readTimeoutHandler(reqId: number, packets: number, reject: (reason?: any) => void) {
+        if (this.pendingMulti.has(reqId)) {
+            const pending = this.pendingMulti.get(reqId);
+
+            if (pending) {
+                const currCount = pending.chunks.length;
+
+                if (currCount > packets) {
+                    // if packets still arriving - reset timeout
+                    setTimeout(() => { this.readTimeoutHandler(reqId, currCount, reject); }, 5000);
+                } else {
+                    this.pendingMulti.delete(reqId);
+                    reject(new Error('UDP readFile timeout'));
+                }
+            }
+        }
+    }
+
     private sendRequestRead(uri: vscode.Uri): Promise<MultiReqData[]> {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
 
@@ -843,12 +861,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 }
             });
 
-            setTimeout(() => {
-                if (this.pendingMulti.has(reqId)) {
-                    this.pendingMulti.delete(reqId);
-                    reject(new Error('UDP readFile timeout'));
-                }
-            }, 7000);
+            setTimeout(() => { this.readTimeoutHandler(reqId, 0, reject); }, 5000);
         });
     }
 

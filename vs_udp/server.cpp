@@ -44,8 +44,8 @@ static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
 // static std::string hex_dump(const void *data, size_t size);
 void writeDataCleaupTask(std::string path, std::weak_ptr<bool> token_weak_ptr)
 {
-    // wait 7 seconds - max wait time for file saving
-    std::this_thread::sleep_for(std::chrono::seconds(7));
+    // wait 
+    std::this_thread::sleep_for(std::chrono::seconds(60));
 
     if (token_weak_ptr.lock())
     {
