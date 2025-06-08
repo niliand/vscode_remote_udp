@@ -7,7 +7,7 @@
 - Uses **UDP** instead of TCP for improved resilience in unstable network conditions  
 - Employs **AES encryption** for secure traffic  
 - Requires a custom **UDP server** running on the target machine
-- Supports **CTAGS**
+- Supports **CTAGS** to find function or type definition
 - Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider doesn't require it
 
 ### To install server

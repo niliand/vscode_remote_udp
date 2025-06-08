@@ -23,6 +23,7 @@ enum PacketFlags {
     CASE_SENSITIVE = 0x08,
     WHOLE_WORD = 0x10,
     REGEX = 0x20,
+    SEQ_NO = 0x40, // read file and send only missing seq numbers
 };
 
 struct packet_hdr {

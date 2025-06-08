@@ -7,7 +7,7 @@ import { controller } from './ExtensionController';
 type PendingRequest = {
     resolve: (value?: any) => void;
     reject: (reason?: any) => void;
-    type: 'void' | 'buffer'; // or use custom request types
+    type: 'void' | 'buffer';
 };
 
 interface MultiReqData {
@@ -87,6 +87,8 @@ export function activate(context: vscode.ExtensionContext) {
                     uri,
                     name: `UDPFS: ${uri.path}`
                 });
+
+                vscode.commands.executeCommand('workbench.view.explorer');
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed to open folder: ${err.message || err}`);
             }
@@ -242,6 +244,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly CASE_SENSITIVE = 0x08;
     private readonly WHOLE_WORD = 0x10;
     private readonly REGEX_WORD = 0x20;
+    private readonly SEQ_NO = 0x40;
 
     private iv = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex'); // 16-byte IV
     private key!: Buffer;
@@ -343,8 +346,18 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
                 if (packet.flags & this.END_OF_TRANSMISSION_FLAG) { // LAST_PACKET flag
                     console.log('Last packet for type: ', type);
-                    this.pendingMulti.delete(reqId);
-                    pending.resolve(pending.chunks);
+
+                    if (type === this.READ_FILE) {
+                        // re-request missing packets
+                        const res = this.readFileCheckRerequest(reqId, packet.uri, pending.chunks);
+                        if (res) {
+                            this.pendingMulti.delete(reqId);
+                            pending.resolve(pending.chunks);
+                        }
+                    } else {
+                        this.pendingMulti.delete(reqId);
+                        pending.resolve(pending.chunks);
+                    }
                 }
             } else {
                 console.warn(`Unexpected multi response with reqId=${reqId}`);
@@ -636,14 +649,15 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const version = buffer.readUInt8(0);
         const type = buffer.readUInt8(1);
         const flags = buffer.readUInt16BE(2);
-        const uriBuf = buffer.slice(4, 259); // 255 bytes
-        const uri = uriBuf.toString('utf8').replace(/\0.*$/, '');
+        const uriBuf = buffer.subarray(4, 259); // 255 bytes
+        const nullTerminatorIndex = uriBuf.indexOf(0x00);
+        const uri = uriBuf.toString('utf8', 0, nullTerminatorIndex !== -1 ? nullTerminatorIndex : 255);
         const length = buffer.readUInt16BE(259);
         const reqId = buffer.readUInt16BE(261);
         const seqNo = buffer.readUInt16BE(263);
         const payload = buffer.slice(this.HEADER_SIZE, this.HEADER_SIZE + length);
 
-        //console.log(`Parsed packet, size: ${buffer.length}, type=${type}, flags=${flags}, reqId=${reqId}, length=${length}`);
+        //console.log(`Parsed packet, size: ${buffer.length}, type=${type}, flags=${flags}, reqId=${reqId}, length=${length}, uri=${uri}`);
 
         return { version, type, flags, uri, length, reqId, seqNo, payload };
     }
@@ -684,6 +698,66 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         return fixedBuffer;
     }
 
+    // return true to process chunks, false - new request sent
+    private readFileCheckRerequest(reqId: number, uriStr: string, chunks: MultiReqData[]): boolean {
+        console.log(`### readFileCheckRerequest reqId=${reqId}, uriStr=${uriStr}`);
+        const existingSequences = new Set<number>();
+        let maxSequence = 0;
+
+        for (const item of chunks) {
+            existingSequences.add(item.seqNo);
+
+            if (item.seqNo > maxSequence) {
+                maxSequence = item.seqNo;
+            }
+        }
+
+        const missingNumbers: number[] = [];
+        for (let i = 0; i <= maxSequence; i++) {
+            if (!existingSequences.has(i)) {
+                missingNumbers.push(i);
+            }
+        }
+
+        if (missingNumbers.length == 0 || missingNumbers.length > 300) {
+            console.log(`READ missingNumbers.length=${missingNumbers.length}, OK`);
+            return true; // all present or too much missing
+        }
+
+        // send request
+        const buffer = Buffer.alloc(this.HEADER_SIZE + missingNumbers.length * 2); // Allocate exact size
+
+        // Fill header fields
+        let offset = 0;
+        buffer.writeUInt8(this.version, offset++);            // version
+        buffer.writeUInt8(this.READ_FILE, offset++);               // type
+        buffer.writeUInt16BE(this.SEQ_NO, offset); offset += 2; // flags (big-endian)
+
+        // Write URI string into buffer
+        const uriBytes = Buffer.from(uriStr, 'utf8');
+        uriBytes.copy(buffer, offset);
+        offset += 255; // move past URI (rest will be zero-padded automatically)
+
+        // Write length (can be updated to include payload later)
+        buffer.writeUInt16BE(missingNumbers.length * 2, offset); offset += 2;
+
+        buffer.writeUInt16BE(reqId, offset); offset += 2;
+        buffer.writeUInt16BE(0, offset); offset += 2; // seq no
+
+        for (const num of missingNumbers) {
+            buffer.writeUInt16BE(num, offset); offset += 2; // seq no
+            console.log('Send MISS: ', num);
+        }
+
+        // Send packet
+        this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+            if (err) {
+                return true; // to process chunks
+            }
+        });
+
+        return false;
+    }
 
     private sendRequestRead(uri: vscode.Uri): Promise<MultiReqData[]> {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size

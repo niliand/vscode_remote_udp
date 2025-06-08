@@ -15,10 +15,12 @@
 #include <chrono>
 #include <thread>
 #include <future>
+#include <unordered_set>
+#include <cstdlib>
 
-#include <fcntl.h>      // open
-#include <unistd.h>     // read, close
-#include <string.h>     // strstr, memchr
+#include <fcntl.h>  // open
+#include <unistd.h> // read, close
+#include <string.h> // strstr, memchr
 #include <memory.h>
 
 #include <openssl/sha.h> // SHA256
@@ -278,36 +280,41 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
     const size_t BUFFER_SIZE = 1 << 20; // 1 MB buffer
 
     int fd = open(filename.c_str(), O_RDONLY);
-    if (fd < 0) {
+    if (fd < 0)
+    {
         perror("open");
         std::cerr << "Error: Could not open file '" << filename << "'" << std::endl;
         return matching_lines; // Return empty vector on error
     }
 
-    char* buffer = new char[BUFFER_SIZE + 1]; // +1 for null-terminator
+    char *buffer = new char[BUFFER_SIZE + 1]; // +1 for null-terminator
     size_t leftover_size = 0;
-    char* leftover = new char[BUFFER_SIZE];
-    char* chunk = new char[BUFFER_SIZE + 1];
+    char *leftover = new char[BUFFER_SIZE];
+    char *chunk = new char[BUFFER_SIZE + 1];
 
     ssize_t bytes_read;
-    while ((bytes_read = read(fd, buffer, BUFFER_SIZE)) > 0) {
+    while ((bytes_read = read(fd, buffer, BUFFER_SIZE)) > 0)
+    {
         buffer[bytes_read] = '\0'; // Null-terminate
         size_t total_size = leftover_size + bytes_read;
 
         // Create a complete buffer with leftover from last read
-        
+
         memcpy(chunk, leftover, leftover_size);
         memcpy(chunk + leftover_size, buffer, bytes_read);
         chunk[total_size] = '\0';
 
         // Line by line scan
-        char* start = chunk;
-        while (true) {
-            char* newline = (char*)memchr(start, '\n', chunk + total_size - start);
-            if (!newline) break;
+        char *start = chunk;
+        while (true)
+        {
+            char *newline = (char *)memchr(start, '\n', chunk + total_size - start);
+            if (!newline)
+                break;
 
             *newline = '\0'; // Temporarily terminate the line
-            if (strstr((const char*)start, pattern.c_str()) && start[pattern_len] == '\t') {
+            if (strstr((const char *)start, pattern.c_str()) && start[pattern_len] == '\t')
+            {
                 matching_lines.push_back(start);
             }
 
@@ -322,9 +329,11 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
     delete[] chunk;
 
     // Handle final leftover (if no newline at end)
-    if (leftover_size > 0) {
+    if (leftover_size > 0)
+    {
         leftover[leftover_size] = '\0';
-        if (strstr((const char*)leftover, pattern.c_str()) && leftover[pattern_len] == '\t') {
+        if (strstr((const char *)leftover, pattern.c_str()) && leftover[pattern_len] == '\t')
+        {
             matching_lines.push_back(leftover);
         }
     }
@@ -448,6 +457,8 @@ int main()
     uint8_t recv_buffer[1024];
     // const char *uri_prefix = "udpfs://"; // Prefix for file URIs
 
+    std::srand(static_cast<unsigned int>(std::time(NULL)));
+
     // Create UDP socket
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
     {
@@ -519,6 +530,7 @@ int main()
             continue;
         }
 
+        /*
         char ip_str[INET_ADDRSTRLEN]; // Buffer to hold the IP address string
 
         struct sockaddr_in *ipv4_addr = (struct sockaddr_in *)&client_addr;
@@ -530,7 +542,7 @@ int main()
         int port = ntohs(ipv4_addr->sin_port);
 
         std::string client_id = std::string(ip_str) + ":" + std::to_string(port);
-
+        */
         packet_hdr *hdr = reinterpret_cast<packet_hdr *>(recv_buffer);
         hdr->flags = ntohs(hdr->flags);
         hdr->length = ntohs(hdr->length);
@@ -550,11 +562,12 @@ int main()
             continue; // Skip processing this packet
         }
 
-        const char *file_path = reinterpret_cast<const char *>(hdr->uri); // + strlen(uri_prefix); // Remove the prefix
-        send_hdr->reqId = hdr->reqId;                                     // NOTE: none converted to host
+        const char *file_path = reinterpret_cast<const char *>(hdr->uri);
+        send_hdr->reqId = hdr->reqId; // NOTE: none converted to host
         send_hdr->version = hdr->version;
         send_hdr->type = hdr->type;
         send_hdr->seqNo = htons(hdr->seqNo);
+        memcpy(send_hdr->uri, hdr->uri, sizeof(hdr->uri));
 
         // Process the packet based on its type
         if (hdr->type == PacketType::READ_FILE)
@@ -578,6 +591,26 @@ int main()
                 continue; // Skip processing this packet
             }
 
+            std::unordered_set<int> missingSeq;
+            bool onlyMissing = false;
+            uint16_t lastSeqNo = 0;
+            if (hdr->flags & PacketFlags::SEQ_NO)
+            {
+                onlyMissing = true;
+                size_t count = hdr->length / 2;
+                std::cout << "MISS[" << count << "]: ";
+                uint16_t *pSeq = reinterpret_cast<uint16_t *>(recv_buffer + sizeof(packet_hdr));
+                for (size_t i = 0; i < count; ++i)
+                {
+                    uint16_t val = ntohs(pSeq[i]);
+                    missingSeq.insert(val);
+                    std::cout << val << ", ";
+                    if (val > lastSeqNo)
+                        lastSeqNo = val;
+                }
+                std::cout << " lastSeqNo=" << lastSeqNo << "\n";
+            }
+
             // Read the file into a buffer
             std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
                                      std::istreambuf_iterator<char>());
@@ -593,26 +626,38 @@ int main()
             {
                 size_t chunk_size = std::min(file_size, static_cast<size_t>(sizeof(send_buffer) - sizeof(packet_hdr)));
                 send_hdr->length = htons(static_cast<uint16_t>(chunk_size));
-                send_hdr->seqNo = htons(seqNo++);
+                send_hdr->seqNo = htons(seqNo);
+                
                 if (file_size <= (sizeof(send_buffer) - sizeof(packet_hdr)))
                 {
                     send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 }
 
                 memcpy(send_buffer + sizeof(packet_hdr), buffer.data() + offset, chunk_size);
-                send_hdr->uri[0] = '\0'; // Clear the URI in the response`
-                sent_bytes = crypto_sendto(sockfd, send_buffer,
-                                           sizeof(packet_hdr) + chunk_size, 0,
-                                           (struct sockaddr *)&client_addr, addr_len, cipher);
-                if (sent_bytes < 0)
+
+                if (!onlyMissing || missingSeq.count(seqNo) > 0)
                 {
-                    std::cerr << "Error sending file data" << std::endl;
-                    break; // Exit on send error
+                    if (onlyMissing && (seqNo == lastSeqNo))
+                    {
+                        send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
+                    }
+
+                    sent_bytes = crypto_sendto(sockfd, send_buffer,
+                                               sizeof(packet_hdr) + chunk_size, 0,
+                                               (struct sockaddr *)&client_addr, addr_len, cipher);
+                    if (sent_bytes < 0)
+                    {
+                        std::cerr << "Error sending file data" << std::endl;
+                        break; // Exit on send error
+                    }
+
+                    //std::cout << "File " << file_path << ", seqNo=" << seqNo <<", sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
+
                 }
                 file_size -= chunk_size;
                 offset += chunk_size;
-                std::cout << "File " << file_path << " sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
+
+                ++seqNo;
 
                 if (file_size == 0)
                     break;
@@ -808,12 +853,11 @@ int main()
                     p = send_buffer + sizeof(packet_hdr);
                     *p = count;
                     ++p;
-                    send_hdr->length = htons(packed + 1);
+                    send_hdr->length = htons(packed);
                     send_hdr->seqNo = htons(seqNo++);
                     if (added == files.size())
                     {
                         send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
                     }
                     crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
                                   (const struct sockaddr *)&client_addr, addr_len, cipher);
@@ -833,17 +877,15 @@ int main()
                 ++added;
             }
 
-            if (count > 0)
+            if (count > 0 || files.size() == 0)
             {
                 // send rest
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
                 // set count:
                 p = send_buffer + sizeof(packet_hdr);
                 *p = count;
 
-                send_hdr->length = htons(packed + 1);
+                send_hdr->length = htons(packed);
                 send_hdr->flags = htons(PacketFlags::LAST_DATA);
                 send_hdr->seqNo = htons(seqNo++);
                 crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
@@ -1049,7 +1091,6 @@ int main()
                     if (added == results.size())
                     {
                         send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
                     }
                     crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
                                   (const struct sockaddr *)&client_addr, addr_len, cipher);
@@ -1077,7 +1118,6 @@ int main()
             if (count > 0 || results.empty())
             {
                 // send rest
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
                 // set count:
                 p = send_buffer + sizeof(packet_hdr);
@@ -1126,7 +1166,7 @@ int main()
             p = send_buffer + sizeof(packet_hdr) + 1;
             for (const auto &r : results)
             {
-                size_t entryLen = r.length() + 1; 
+                size_t entryLen = r.length() + 1;
 
                 if ((packed + entryLen) > maxSize)
                 {
@@ -1139,7 +1179,6 @@ int main()
                     if (added == results.size())
                     {
                         send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
                     }
                     crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
                                   (const struct sockaddr *)&client_addr, addr_len, cipher);
@@ -1160,9 +1199,6 @@ int main()
 
             if (count > 0 || results.empty())
             {
-                // send rest
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
                 // set count:
                 p = send_buffer + sizeof(packet_hdr);
                 *p = count;
@@ -1201,8 +1237,32 @@ static void reply_error(int sockfd, const struct sockaddr_in &cliaddr, socklen_t
 static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
                          const struct sockaddr *dest_addr, socklen_t addrlen, AESCipher &cipher)
 {
+    const packet_hdr *hdr = reinterpret_cast<const packet_hdr *>(buf);
+    bool last = ntohs(hdr->flags) & PacketFlags::LAST_DATA;
+
     std::vector<uint8_t> encrypted_data = cipher.encrypt(buf, len);
-    return sendto(sockfd, encrypted_data.data(), encrypted_data.size(), flags, dest_addr, addrlen);
+
+    if (last)
+    {
+        // Send last packet twice for reliability:
+        struct sockaddr_in addr = *reinterpret_cast<const struct sockaddr_in *>(dest_addr);
+        auto lambda = [sockfd, encrypted_data, addr, addrlen]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            sendto(sockfd, encrypted_data.data(), encrypted_data.size(), 0, (const struct sockaddr *)&addr, addrlen);
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            sendto(sockfd, encrypted_data.data(), encrypted_data.size(), 0, (const struct sockaddr *)&addr, addrlen);
+        };
+
+        std::thread t(lambda);
+        t.detach();
+    }
+    else
+    {
+        return sendto(sockfd, encrypted_data.data(), encrypted_data.size(), flags, dest_addr, addrlen);
+    }
+
+    return len;
 }
 
 #if 0
