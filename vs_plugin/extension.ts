@@ -265,6 +265,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         chunks: MultiReqData[];
     }>();
 
+    private writeRequests = new Map<number, Buffer[]>();
+
     constructor() {
         const config = vscode.workspace.getConfiguration('udpfs');
         this.updateConfig(config);
@@ -290,8 +292,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         this.key = crypto.createHash('sha256').update(password).digest(); // 32-byte key
 
         this.SERVER_HOST = hostname;
-
-        console.log(`### hostname=${hostname}`);
     }
 
     private getReqId() {
@@ -363,6 +363,12 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 console.warn(`Unexpected multi response with reqId=${reqId}`);
             }
         } else {
+
+            if (type === this.WRITE_FILE && (flags & this.SEQ_NO)) {
+                // request to re-send packets for writing
+                this.writeFileResend(reqId, msg);
+                return;
+            }
 
             const resolver = this.pendingRequests.get(reqId);
             if (resolver) {
@@ -451,7 +457,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
                 let offset = 0;
                 const totalItems = chunk.buffer.readUInt8(offset);
-                console.log('chunk totalItems', totalItems);
                 offset += 1;
 
                 for (let i = 0; i < totalItems; i++) {
@@ -590,6 +595,14 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             });
         }
 
+        this.writeRequests.set(reqId, packets);
+
+        // duplicate last packet:
+        setTimeout(() => {
+            const pkt = packets[packets.length - 1];
+            this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
+        }, 300);
+
         // Wait for single final ACK (using pendingRequests)
         return new Promise<void>((resolve, reject) => {
             this.pendingRequests.set(reqId, {
@@ -600,6 +613,10 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
             // Timeout to reject if no reply
             setTimeout(() => {
+                if (this.writeRequests.has(reqId)) {
+                    this.writeRequests.delete(reqId);
+                }
+
                 if (this.pendingRequests.has(reqId)) {
                     this.pendingRequests.delete(reqId);
                     reject(new Error('Timeout waiting for writeFile ACK'));
@@ -655,7 +672,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const length = buffer.readUInt16BE(259);
         const reqId = buffer.readUInt16BE(261);
         const seqNo = buffer.readUInt16BE(263);
-        const payload = buffer.slice(this.HEADER_SIZE, this.HEADER_SIZE + length);
+        const payload = buffer.subarray(this.HEADER_SIZE, this.HEADER_SIZE + length);
 
         //console.log(`Parsed packet, size: ${buffer.length}, type=${type}, flags=${flags}, reqId=${reqId}, length=${length}, uri=${uri}`);
 
@@ -698,9 +715,38 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         return fixedBuffer;
     }
 
+    private writeFileResend(reqId: number, msg: Buffer) {
+        const packet = this.parsePacket(msg);
+        const num = packet.length / 2;
+        let offset = 0;
+        if (!this.writeRequests.has(reqId)) {
+            console.log(`ERROR: no such reqId=${reqId} in writeRequests`);
+            return;
+        }
+        const packets = this.writeRequests.get(reqId);
+        if (!packets) {
+            console.log(`ERROR: can't get reqId=${reqId} in writeRequests`);
+            return;
+        }
+        for (let i = 0; i < num; i++) {
+             const seqNo = packet.payload.readUInt16BE(offset); offset += 2;
+
+             if (seqNo < packets.length) {
+                 const pkt = packets[seqNo];
+                 let flags = 0;
+                 if (i == (num - 1)) {
+                    // the last one
+                    flags = this.END_OF_TRANSMISSION_FLAG;
+                 }
+                 pkt.writeUInt16BE(flags, 2); // flags
+                 this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
+             }
+
+        }
+    }
+
     // return true to process chunks, false - new request sent
     private readFileCheckRerequest(reqId: number, uriStr: string, chunks: MultiReqData[]): boolean {
-        console.log(`### readFileCheckRerequest reqId=${reqId}, uriStr=${uriStr}`);
         const existingSequences = new Set<number>();
         let maxSequence = 0;
 

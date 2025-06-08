@@ -80,6 +80,7 @@ struct SessionData {
     uint16_t length;
 
     uint16_t    seqNo;
+    bool last;
 };
 
 struct SessionDataValue {
