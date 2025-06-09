@@ -383,12 +383,12 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
             const resolver = this.pendingRequests.get(reqId);
             if (resolver) {
-                this.pendingRequests.delete(reqId);
                 if (resolver.type === 'void') {
                     resolver.resolve(); // no payload
                 } else {
                     resolver.resolve(msg); // pass buffer
                 }
+                this.pendingRequests.delete(reqId);
             } else {
                 console.log(`Unexpected response with reqId=${reqId}`);
             }
@@ -420,13 +420,13 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             const fileInfo = this.parseFileInfo(packet.payload);
 
             return {
-                type: fileInfo.type === 1 ? vscode.FileType.File : vscode.FileType.Directory,
+                type: fileInfo.type as vscode.FileType, // === 1 ? vscode.FileType.File : vscode.FileType.Directory,
                 size: fileInfo.size,
                 ctime: fileInfo.ctime.getTime(),
                 mtime: fileInfo.mtime.getTime(),
             };
         }).catch((err) => {
-            console.error('FileNotFound: Error getting file stat:', (err as Error).message);
+            console.error('FileNotFound: Error getting file stat:', (err as Error).message, uri.path);
             //throw err; // Re-throw to propagate error to caller
             throw vscode.FileSystemError.FileNotFound(uri);
         });
@@ -1021,7 +1021,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
             setTimeout(() => {
                 this.pendingRequests.delete(reqId);
-                reject(new Error('UDP request timed out'));
+                reject(new Error('UDP request stat() timed out for ' + uri.path));
             }, 3000);
 
         });

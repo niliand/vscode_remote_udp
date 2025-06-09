@@ -622,6 +622,7 @@ int main()
             size_t file_size = buffer.size();
             size_t offset = 0;
             uint16_t seqNo = 0;
+            size_t sent = 0;
             while (file_size >= 0)
             {
                 size_t chunk_size = std::min(file_size, static_cast<size_t>(sizeof(send_buffer) - sizeof(packet_hdr)));
@@ -649,6 +650,12 @@ int main()
                     {
                         std::cerr << "Error sending file data" << std::endl;
                         break; // Exit on send error
+                    }
+                    ++sent;
+
+                    if (sent > 30) {
+                        sent = 0;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
                     }
 
                     // std::cout << "File " << file_path << ", seqNo=" << seqNo <<", sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
