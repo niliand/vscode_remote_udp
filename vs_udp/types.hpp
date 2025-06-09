@@ -86,6 +86,7 @@ struct SessionData {
 struct SessionDataValue {
     std::vector<SessionData> packets;
     std::shared_ptr<bool> erasure_token;
+    bool started;
 };
 
 struct SearchResult

@@ -733,10 +733,10 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
             if (seqNo < packets.length) {
                 const pkt = packets[seqNo];
-                let flags = 0;
+                let flags = this.SEQ_NO;
                 if (i == (num - 1)) {
                     // the last one
-                    flags = this.END_OF_TRANSMISSION_FLAG;
+                    flags += this.END_OF_TRANSMISSION_FLAG;
                 }
                 pkt.writeUInt16BE(flags, 2); // flags
                 this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
@@ -1222,7 +1222,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     this.pendingMulti.delete(reqId);
                     reject(new Error('UDP search definition timeout'));
                 }
-            }, 5000);
+            }, 7000);
         });
     }
 

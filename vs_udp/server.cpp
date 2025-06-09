@@ -44,13 +44,13 @@ static int crypto_sendto(int sockfd, const uint8_t *buf, size_t len, int flags,
 // static std::string hex_dump(const void *data, size_t size);
 void writeDataCleaupTask(std::string path, std::weak_ptr<bool> token_weak_ptr)
 {
-    // wait 
+    // wait
     std::this_thread::sleep_for(std::chrono::seconds(60));
 
     if (token_weak_ptr.lock())
     {
         // cleaup
-        //std::cout << "writeDataCleaupTask: erase " << path << "\n";
+        // std::cout << "writeDataCleaupTask: erase " << path << "\n";
         writeData.erase(path);
     }
 }
@@ -667,7 +667,8 @@ int main()
         {
             std::cout << "Processing WRITE_FILE request for URI: " << hdr->uri << ", seqNo: " << hdr->seqNo << std::endl;
 
-            if (hdr->seqNo == 2 && ((rand() % 100) < 40)) {
+            if (hdr->seqNo == 2 && ((rand() % 100) < 40))
+            {
                 std::cout << "SKIP\n";
                 continue;
             }
@@ -690,7 +691,7 @@ int main()
             memcpy(data.buffer, recv_buffer + sizeof(packet_hdr), hdr->length);
             data.length = hdr->length;
             data.seqNo = hdr->seqNo;
-            data.last = (hdr->flags & PacketFlags::LAST_DATA) ? true : false;
+            data.last = ((hdr->flags & PacketFlags::LAST_DATA) && !(hdr->flags & PacketFlags::SEQ_NO)) ? true : false;
             writeData[file_path].packets.push_back(data);
 
             if (firstPacket)
@@ -702,18 +703,23 @@ int main()
 
             if (hdr->flags & PacketFlags::LAST_DATA)
             {
-                std::string path(file_path);
-                packet_hdr send_hdr2 = *send_hdr;
-                // save asynchronously with a delay in case some remaining packets can be received
+                if (!writeData[file_path].started)
+                {
+                    std::string path(file_path);
+                    packet_hdr send_hdr2 = *send_hdr;
+                    // save asynchronously with a delay in case some remaining packets can be received
 
-                std::thread([path, sockfd, send_hdr2,
-                             client_addr, addr_len, &cipher]
-                            {
+                    writeData[file_path].started = true;
+
+                    std::thread([path, sockfd, send_hdr2,
+                                 client_addr, addr_len, &cipher]
+                                {
                                 uint8_t send_buffer[1024];
                                 std::this_thread::sleep_for(500ms); // 0.5 second delay
 
                                 if (!writeData.count(path)) {
-                                    //std::cerr << "No packets to write for file " << path << "\n";
+                                    writeData[path].started = false;
+                                    std::cerr << "No packets to write for file " << path << "\n";
                                     return;
                                 }
                                 // write file
@@ -745,6 +751,8 @@ int main()
 
                                 if (!missingSeq.empty())
                                 {
+                                    writeData[path].started = false;
+
                                     if (missingSeq.size() > 200)
                                     {
                                         std::cerr << "Too many missing packets for: " << path << std::endl;
@@ -775,6 +783,7 @@ int main()
                                 outFile.open(path, std::ios::binary | std::ios::trunc);
                                 if (!outFile)
                                 {
+                                    writeData[path].started = false;
                                     std::cerr << "Failed to open file for writing: " << path << std::endl;
                                     reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't open file for writing", cipher);
                                     return;
@@ -812,8 +821,12 @@ int main()
                                 send_hdr->length = 0;
                                 crypto_sendto(sockfd, send_buffer,
                                                            sizeof(packet_hdr), 0,
-                                                           (struct sockaddr *)&client_addr, addr_len, cipher); })
-                    .detach();
+                                                           (struct sockaddr *)&client_addr, addr_len, cipher);
+                                writeData[path].started = false;
+                                                        
+                                                        })
+                        .detach();
+                }
             }
         }
         else if (hdr->type == PacketType::DELETE_FILE)
@@ -983,8 +996,8 @@ int main()
                 std::cerr << "Error sending file info" << std::endl;
                 continue; // Exit on send error
             }
-            //std::cout << "File info sent successfully for " << file_path << " sent " << sent_bytes << " bytes." << std::endl;
-            //std::cout << "Sent " << sizeof(packet_hdr) + sizeof(file_info) << " bytes in response." << std::endl;
+            // std::cout << "File info sent successfully for " << file_path << " sent " << sent_bytes << " bytes." << std::endl;
+            // std::cout << "Sent " << sizeof(packet_hdr) + sizeof(file_info) << " bytes in response." << std::endl;
         }
         else if (hdr->type == PacketType::CREATE_DIRECTORY)
         {
