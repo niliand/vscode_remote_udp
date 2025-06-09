@@ -291,7 +291,6 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
     char *buffer = new char[BUFFER_SIZE + 1]; // +1 for null-terminator
     size_t leftover_size = 0;
     char *leftover = new char[BUFFER_SIZE];
-    char *chunk = new char[BUFFER_SIZE + 1];
 
     ssize_t bytes_read;
     while ((bytes_read = read(fd, buffer, BUFFER_SIZE)) > 0)
@@ -300,7 +299,7 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
         size_t total_size = leftover_size + bytes_read;
 
         // Create a complete buffer with leftover from last read
-
+        char* chunk = new char[total_size + 1];
         memcpy(chunk, leftover, leftover_size);
         memcpy(chunk + leftover_size, buffer, bytes_read);
         chunk[total_size] = '\0';
@@ -325,9 +324,11 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
         // Save leftover bytes for next round
         leftover_size = chunk + total_size - start;
         memcpy(leftover, start, leftover_size);
+
+        delete[] chunk;
     }
 
-    delete[] chunk;
+
 
     // Handle final leftover (if no newline at end)
     if (leftover_size > 0)
@@ -1219,7 +1220,8 @@ int main()
             p = send_buffer + sizeof(packet_hdr) + 1;
             for (const auto &r : results)
             {
-                size_t entryLen = r.length() + 1;
+                std::string line = r.substr(0, 255);
+                size_t entryLen = line.length() + 1;
 
                 if ((packed + entryLen) > maxSize)
                 {
@@ -1239,12 +1241,12 @@ int main()
                     count = 0;
                     packed = 1;
                 }
-                *p = r.length();
+                *p = line.length();
                 ++p;
-                memcpy(p, r.c_str(), r.length());
-                p += r.length();
+                memcpy(p, line.c_str(), line.length());
+                p += line.length();
 
-                packed += (1 + r.length());
+                packed += (1 + line.length());
 
                 ++count;
                 ++added;
