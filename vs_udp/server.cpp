@@ -299,7 +299,7 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
         size_t total_size = leftover_size + bytes_read;
 
         // Create a complete buffer with leftover from last read
-        char* chunk = new char[total_size + 1];
+        char *chunk = new char[total_size + 1];
         memcpy(chunk, leftover, leftover_size);
         memcpy(chunk + leftover_size, buffer, bytes_read);
         chunk[total_size] = '\0';
@@ -327,8 +327,6 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
 
         delete[] chunk;
     }
-
-
 
     // Handle final leftover (if no newline at end)
     if (leftover_size > 0)
@@ -715,117 +713,117 @@ int main()
                     std::thread([path, sockfd, send_hdr2,
                                  client_addr, addr_len, &cipher]
                                 {
-                                uint8_t send_buffer[1024];
-                                std::this_thread::sleep_for(500ms); // 0.5 second delay
+                                    uint8_t send_buffer[1024];
+                                    std::this_thread::sleep_for(500ms); // 0.5 second delay
 
-                                if (!writeData.count(path)) {
-                                    writeData[path].started = false;
-                                    std::cerr << "No packets to write for file " << path << "\n";
-                                    return;
-                                }
-                                // write file
-                                std::vector<SessionData> &packets = writeData[path].packets;
-                                //std::cout << "Write " << packets.size() << " packets\n";
-
-                                // Sort in ascending order by seqNo
-                                std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
-                                          { return a.seqNo < b.seqNo; });
-
-                                uint16_t seq = 0;
-
-                                std::unordered_set<int> missingSeq;
-                                for (const auto &packet : packets)
-                                {
-                                    while (packet.seqNo > seq)
+                                    if (!writeData.count(path))
                                     {
-                                        missingSeq.insert(seq);
-                                        std::cerr << "missing: " << seq << std::endl;
-                                        seq++;
-                                    }
-                                    seq = packet.seqNo + 1; // Move to the next expected
-
-                                    if (packet.last)
-                                    {
-                                        break;
-                                    }
-                                }
-
-                                if (!missingSeq.empty())
-                                {
-                                    writeData[path].started = false;
-
-                                    if (missingSeq.size() > 200)
-                                    {
-                                        std::cerr << "Too many missing packets for: " << path << std::endl;
-                                        reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't write file - too many loses", cipher);
-                                        writeData.erase(path);
+                                        writeData[path].started = false;
+                                        std::cerr << "No packets to write for file " << path << "\n";
                                         return;
                                     }
-                                    // send new request
+                                    // write file
+                                    std::vector<SessionData> &packets = writeData[path].packets;
+                                    // std::cout << "Write " << packets.size() << " packets\n";
+
+                                    // Sort in ascending order by seqNo
+                                    std::sort(packets.begin(), packets.end(), [](const SessionData &a, const SessionData &b)
+                                              { return a.seqNo < b.seqNo; });
+
+                                    uint16_t seq = 0;
+
+                                    std::unordered_set<int> missingSeq;
+                                    for (const auto &packet : packets)
+                                    {
+                                        while (packet.seqNo > seq)
+                                        {
+                                            missingSeq.insert(seq);
+                                            std::cerr << "missing: " << seq << std::endl;
+                                            seq++;
+                                        }
+                                        seq = packet.seqNo + 1; // Move to the next expected
+
+                                        if (packet.last)
+                                        {
+                                            break;
+                                        }
+                                    }
+
+                                    if (!missingSeq.empty())
+                                    {
+                                        writeData[path].started = false;
+
+                                        if (missingSeq.size() > 200)
+                                        {
+                                            std::cerr << "Too many missing packets for: " << path << std::endl;
+                                            reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't write file - too many loses", cipher);
+                                            writeData.erase(path);
+                                            return;
+                                        }
+                                        // send new request
+                                        memcpy(send_buffer, &send_hdr2, sizeof(send_hdr2));
+                                        packet_hdr *send_hdr = reinterpret_cast<packet_hdr *>(send_buffer);
+
+                                        send_hdr->flags = htons(PacketFlags::SEQ_NO);
+                                        send_hdr->length = htons(missingSeq.size() * 2);
+                                        uint16_t *p = reinterpret_cast<uint16_t *>(send_buffer + sizeof(packet_hdr));
+                                        for (const int seq : missingSeq)
+                                        {
+                                            *p = htons(seq);
+                                            ++p;
+                                        }
+                                        crypto_sendto(sockfd, send_buffer,
+                                                      sizeof(packet_hdr) + missingSeq.size() * 2, 0,
+                                                      (struct sockaddr *)&client_addr, addr_len, cipher);
+
+                                        return;
+                                    }
+
+                                    // open file for write and append, or create file
+                                    std::ofstream outFile;
+                                    outFile.open(path, std::ios::binary | std::ios::trunc);
+                                    if (!outFile)
+                                    {
+                                        writeData[path].started = false;
+                                        std::cerr << "Failed to open file for writing: " << path << std::endl;
+                                        reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't open file for writing", cipher);
+                                        return;
+                                    }
+
+                                    seq = 0;
+                                    for (const SessionData &packet : packets)
+                                    {
+                                        if (packet.seqNo != seq)
+                                        {
+                                            std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
+                                            reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't write file", cipher);
+                                            break;
+                                        }
+
+                                        ++seq;
+
+                                        outFile.write(reinterpret_cast<const char *>(packet.buffer), packet.length);
+
+                                        if (packet.last)
+                                        {
+                                            break;
+                                        }
+                                    }
+
+                                    outFile.close();
+
+                                    writeData.erase(path);
+
                                     memcpy(send_buffer, &send_hdr2, sizeof(send_hdr2));
-                                    packet_hdr* send_hdr = reinterpret_cast<packet_hdr*>(send_buffer);
+                                    packet_hdr *send_hdr = reinterpret_cast<packet_hdr *>(send_buffer);
 
-                                    send_hdr->flags = htons(PacketFlags::SEQ_NO);
-                                    send_hdr->length = htons(missingSeq.size() * 2);
-                                    uint16_t* p = reinterpret_cast<uint16_t*>(send_buffer + sizeof(packet_hdr));
-                                    for (const int seq : missingSeq) {
-                                        *p = htons(seq);
-                                        ++p;
-                                    }
+                                    // reply for ACK
+                                    send_hdr->flags = 0;
+                                    send_hdr->length = 0;
                                     crypto_sendto(sockfd, send_buffer,
-                                                           sizeof(packet_hdr) + missingSeq.size() * 2, 0,
-                                                           (struct sockaddr *)&client_addr, addr_len, cipher);
-
-                                    return;
-                                }
-
-                                // open file for write and append, or create file
-                                std::ofstream outFile;
-                                outFile.open(path, std::ios::binary | std::ios::trunc);
-                                if (!outFile)
-                                {
-                                    writeData[path].started = false;
-                                    std::cerr << "Failed to open file for writing: " << path << std::endl;
-                                    reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't open file for writing", cipher);
-                                    return;
-                                }
-
-                                seq = 0;
-                                for (const SessionData &packet : packets)
-                                {
-                                    if (packet.seqNo != seq)
-                                    {
-                                        std::cerr << "Seq No mismatch: " << path << ", " << packet.seqNo << " != " << seq << std::endl;
-                                        reply_error(sockfd, client_addr, addr_len, PacketType::WRITE_FILE, "Can't write file", cipher);
-                                        break;
-                                    }
-
-                                    ++seq;
-
-                                    outFile.write(reinterpret_cast<const char *>(packet.buffer), packet.length);
-
-                                    if (packet.last)
-                                    {
-                                        break;
-                                    }
-                                }
-
-                                outFile.close();
-
-                                writeData.erase(path);
-
-                                memcpy(send_buffer, &send_hdr2, sizeof(send_hdr2));
-                                packet_hdr* send_hdr = reinterpret_cast<packet_hdr*>(send_buffer);
-
-                                // reply for ACK
-                                send_hdr->flags = 0;
-                                send_hdr->length = 0;
-                                crypto_sendto(sockfd, send_buffer,
-                                                           sizeof(packet_hdr), 0,
-                                                           (struct sockaddr *)&client_addr, addr_len, cipher);
-                                writeData[path].started = false;
-                                                        
-                                                        })
+                                                  sizeof(packet_hdr), 0,
+                                                  (struct sockaddr *)&client_addr, addr_len, cipher);
+                                    writeData[path].started = false; })
                         .detach();
                 }
             }
@@ -888,6 +886,26 @@ int main()
             std::cout << "Processing LIST_FILES request" << std::endl;
             auto files = listDirectory(file_path);
 
+            std::unordered_set<int> missingSeq;
+            bool onlyMissing = false;
+            uint16_t lastSeqNo = 0;
+            if (hdr->flags & PacketFlags::SEQ_NO)
+            {
+                onlyMissing = true;
+                size_t count = hdr->length / 2;
+                std::cout << "MISS[" << count << "]: ";
+                uint16_t *pSeq = reinterpret_cast<uint16_t *>(recv_buffer + sizeof(packet_hdr));
+                for (size_t i = 0; i < count; ++i)
+                {
+                    uint16_t val = ntohs(pSeq[i]);
+                    missingSeq.insert(val);
+                    std::cout << val << ", ";
+                    if (val > lastSeqNo)
+                        lastSeqNo = val;
+                }
+                std::cout << " lastSeqNo=" << lastSeqNo << "\n";
+            }
+
             send_hdr->flags = 0;
 
             // packet files in format: items num (byte), file type (byte), name length (byte), name bytes
@@ -908,13 +926,23 @@ int main()
                     *p = count;
                     ++p;
                     send_hdr->length = htons(packed);
-                    send_hdr->seqNo = htons(seqNo++);
+                    send_hdr->seqNo = htons(seqNo);
                     if (added == files.size())
                     {
                         send_hdr->flags = htons(PacketFlags::LAST_DATA);
                     }
-                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
-                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+
+                    if (!onlyMissing || missingSeq.count(seqNo) > 0)
+                    {
+                        if (onlyMissing && (seqNo == lastSeqNo))
+                        {
+                            send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
+                        }
+                        crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                      (const struct sockaddr *)&client_addr, addr_len, cipher);
+                    }
+
+                    ++seqNo;
 
                     count = 0;
                     packed = 1;
@@ -941,10 +969,18 @@ int main()
 
                 send_hdr->length = htons(packed);
                 send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                send_hdr->seqNo = htons(seqNo++);
-                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
-                              (const struct sockaddr *)&client_addr, addr_len, cipher);
-                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
+                send_hdr->seqNo = htons(seqNo);
+
+                if (!onlyMissing || missingSeq.count(seqNo) > 0)
+                {
+                    if (onlyMissing && (seqNo == lastSeqNo))
+                    {
+                        send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
+                    }
+                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+                    std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
+                }
             }
         }
         else if (hdr->type == PacketType::FILE_INFO)

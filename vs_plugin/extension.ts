@@ -353,16 +353,25 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                         // re-request missing packets
                         const res = this.readFileCheckRerequest(reqId, packet.uri, pending.chunks);
                         if (res) {
-                            this.pendingMulti.delete(reqId);
                             pending.resolve(pending.chunks);
+                            console.log(`Remove from pendingMulti reqId=${reqId}`);
+                            this.pendingMulti.delete(reqId);
+                        }
+                    } else if (type === this.LIST_FILES) {
+                        // re-request missing packets
+                        const res = this.readDirectoryCheckRerequest(reqId, packet.uri, pending.chunks);
+                        if (res) {
+                            pending.resolve(pending.chunks);
+                            console.log(`Remove from pendingMulti reqId=${reqId}`);
+                            this.pendingMulti.delete(reqId);
                         }
                     } else {
-                        this.pendingMulti.delete(reqId);
                         pending.resolve(pending.chunks);
+                        this.pendingMulti.delete(reqId);
                     }
                 }
             } else {
-                console.warn(`Unexpected multi response with reqId=${reqId}`);
+                console.log(`Unexpected multi response with reqId=${reqId}`);
             }
         } else {
 
@@ -381,7 +390,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     resolver.resolve(msg); // pass buffer
                 }
             } else {
-                console.warn(`Unexpected response with reqId=${reqId}`);
+                console.log(`Unexpected response with reqId=${reqId}`);
             }
         }
     };
@@ -441,18 +450,16 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         return this.sendRequestReadDir(uri).then(chunks => {
 
-            console.log('readDirectory num packets: ', chunks.length);
-
             const itemSize = 34; // list_info size
             const items: [name: string, type: vscode.FileType][] = [];
 
             let seqNo = 0;
             chunks.sort((a, b) => a.seqNo - b.seqNo);
             for (const chunk of chunks) {
-                console.log('chunk seqNo', seqNo);
+
                 //const numFiles = packet.length / itemSize;
                 if (chunk.seqNo != seqNo) {
-                    console.error(`Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
+                    console.error(`Read DIR: Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
                     throw vscode.FileSystemError.Unavailable(`Unable to read directory: ${uri.toString()}`);
                 }
                 seqNo = seqNo + 1;
@@ -485,7 +492,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
             return items;
         });
-        //return [['file.txt', vscode.FileType.File]];
     }
 
     createDirectory(uri: vscode.Uri): void | Thenable<void> {
@@ -504,19 +510,21 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         return this.sendRequestRead(uri).then(chunks => {
             const total = chunks.reduce((acc, buf) => acc + buf.buffer.length, 0);
+            console.log(`Process READ chunks num ${chunks.length}, total=${total}`);
             const result = new Uint8Array(total);
             let offset = 0;
             let seqNo = 0;
             chunks.sort((a, b) => a.seqNo - b.seqNo);
             for (const chunk of chunks) {
                 if (chunk.seqNo != seqNo) {
-                    console.error(`Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
+                    console.error(`Read File: Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
                     throw vscode.FileSystemError.Unavailable(`Cannot read file: ${uri.toString()}`);
                 }
                 seqNo = seqNo + 1;
                 result.set(chunk.buffer, offset);
                 offset += chunk.buffer.length;
             }
+            console.log('READ: return result!! size=', result.length);
             return result;
         });
     }
@@ -807,9 +815,73 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         return false;
     }
 
+    // return true to process chunks, false - new request sent
+    private readDirectoryCheckRerequest(reqId: number, uriStr: string, chunks: MultiReqData[]): boolean {
+        const existingSequences = new Set<number>();
+        let maxSequence = 0;
+
+        for (const item of chunks) {
+            existingSequences.add(item.seqNo);
+
+            if (item.seqNo > maxSequence) {
+                maxSequence = item.seqNo;
+            }
+        }
+
+        const missingNumbers: number[] = [];
+        for (let i = 0; i <= maxSequence; i++) {
+            if (!existingSequences.has(i)) {
+                missingNumbers.push(i);
+            }
+        }
+
+        if (missingNumbers.length == 0 || missingNumbers.length > 300) {
+            console.log(`READ-DIR missingNumbers.length=${missingNumbers.length}, OK`);
+            return true; // all present or too much missing
+        }
+
+        // send request
+        const buffer = Buffer.alloc(this.HEADER_SIZE + missingNumbers.length * 2); // Allocate exact size
+
+        // Fill header fields
+        let offset = 0;
+        buffer.writeUInt8(this.version, offset++);            // version
+        buffer.writeUInt8(this.LIST_FILES, offset++);               // type
+        buffer.writeUInt16BE(this.SEQ_NO, offset); offset += 2; // flags (big-endian)
+
+        // Write URI string into buffer
+        const uriBytes = Buffer.from(uriStr, 'utf8');
+        uriBytes.copy(buffer, offset);
+        offset += 255; // move past URI (rest will be zero-padded automatically)
+
+        // Write length (can be updated to include payload later)
+        buffer.writeUInt16BE(missingNumbers.length * 2, offset); offset += 2;
+
+        buffer.writeUInt16BE(reqId, offset); offset += 2;
+        buffer.writeUInt16BE(0, offset); offset += 2; // seq no
+
+        for (const num of missingNumbers) {
+            buffer.writeUInt16BE(num, offset); offset += 2; // seq no
+            console.log('Send MISS: ', num);
+        }
+
+        // Send packet
+        this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+            if (err) {
+                return true; // to process chunks
+            }
+        });
+
+        return false;
+    }
+
+
     private readTimeoutHandler(reqId: number, packets: number, reject: (reason?: any) => void) {
+        console.log(`readTimeoutHandler reqId=${reqId}, packets=${packets}`);
         if (this.pendingMulti.has(reqId)) {
             const pending = this.pendingMulti.get(reqId);
+
+            console.log(`readTimeoutHandler pending=${pending ? 'YES' : 'NO'}, currCount=${pending?.chunks.length}`);
 
             if (pending) {
                 const currCount = pending.chunks.length;
@@ -818,8 +890,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     // if packets still arriving - reset timeout
                     setTimeout(() => { this.readTimeoutHandler(reqId, currCount, reject); }, 5000);
                 } else {
+                    console.log(`readTimeoutHandler reqId=${reqId}, TIMEOUT!!`);
                     this.pendingMulti.delete(reqId);
-                    reject(new Error('UDP readFile timeout'));
+                    reject(new Error('UDP read timeout'));
                 }
             }
         }
@@ -905,12 +978,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 }
             });
 
-            setTimeout(() => {
-                if (this.pendingMulti.has(reqId)) {
-                    this.pendingMulti.delete(reqId);
-                    reject(new Error('UDP readFile timeout'));
-                }
-            }, 5000);
+            setTimeout(() => { this.readTimeoutHandler(reqId, 0, reject); }, 5000);
         });
     }
 
