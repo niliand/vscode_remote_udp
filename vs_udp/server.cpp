@@ -103,6 +103,168 @@ std::string to_lower(const std::string &s)
     return lower;
 }
 
+void fast_search_in_file(const fs::path &file_path, const char *search_text, bool case_sensitive, bool whole_word, bool regex, std::vector<SearchResult> &results)
+{
+
+    const size_t BUFFER_SIZE = 1 << 20; // 1 MB buffer
+
+    int fd = open(file_path.c_str(), O_RDONLY);
+    if (fd < 0)
+    {
+        perror("open");
+        std::cerr << "Error: Could not open file '" << file_path << "'" << std::endl;
+        return;
+    }
+
+    std::regex compiled_regex;
+    bool use_regex = false;
+    uint16_t line_number = 1;
+
+    try
+    {
+        if (regex)
+        {
+            compiled_regex = case_sensitive
+                                 ? std::regex(search_text)
+                                 : std::regex(search_text, std::regex_constants::icase);
+            use_regex = true;
+        }
+        else if (whole_word)
+        {
+            std::string pattern = std::string("\\b") + std::string(search_text) + "\\b";
+            compiled_regex = case_sensitive
+                                 ? std::regex(pattern)
+                                 : std::regex(pattern, std::regex_constants::icase);
+            use_regex = true;
+        }
+    }
+    catch (const std::regex_error &e)
+    {
+        std::cerr << "Invalid regex pattern: " << search_text << " (" << e.what() << ")\n";
+        results.push_back({file_path, std::string("Invalid regex pattern: ") + search_text + " (" + e.what() + ")", 0});
+        return;
+    }
+
+    char *buffer = new char[BUFFER_SIZE + 1]; // +1 for null-terminator
+    size_t leftover_size = 0;
+    char *leftover = new char[BUFFER_SIZE];
+
+    ssize_t bytes_read;
+    bool match = false;
+    while ((bytes_read = read(fd, buffer, BUFFER_SIZE)) > 0)
+    {
+        buffer[bytes_read] = '\0'; // Null-terminate
+        size_t total_size = leftover_size + bytes_read;
+
+        // Create a complete buffer with leftover from last read
+        char *chunk = new char[total_size + 1];
+        memcpy(chunk, leftover, leftover_size);
+        memcpy(chunk + leftover_size, buffer, bytes_read);
+        chunk[total_size] = '\0';
+
+        // Line by line scan
+        char *start = chunk;
+        while (true)
+        {
+            match = false;
+
+            char *newline = (char *)memchr(start, '\n', chunk + total_size - start);
+            if (!newline)
+                break;
+
+            *newline = '\0'; // Temporarily terminate the line
+
+            if (use_regex)
+            {
+                match = std::regex_search(start, compiled_regex);
+            }
+            else
+            {
+                if (case_sensitive)
+                {
+                    if (strstr(start, search_text))
+                    {
+                        match = true;
+                    }
+                }
+                else
+                {
+                    if (strcasestr(start, search_text))
+                    {
+                        match = true;
+                    }
+                }
+            }
+            if (match)
+            {
+                std::string line(start);
+                std::string snippet = line.length() > 250 ? line.substr(0, 250) : line;
+                results.push_back({file_path, snippet, line_number});
+                // std::cout << "found text: " << file_path << ":" << line_number << ": " << snippet << "\n";
+            }
+
+            start = newline + 1;
+
+            ++line_number;
+            if (line_number == 0xFFFF)
+            {
+                break; // max line number is 65535 for now
+            }
+        }
+
+        // Save leftover bytes for next round
+        leftover_size = chunk + total_size - start;
+        memcpy(leftover, start, leftover_size);
+
+        delete[] chunk;
+
+        if (line_number == 0xFFFF)
+        {
+            break; // max line number is 65535 for now
+        }
+    }
+
+    // Handle final leftover (if no newline at end)
+    if (leftover_size > 0)
+    {
+        match = false;
+        leftover[leftover_size] = '\0';
+
+        if (use_regex)
+        {
+            match = std::regex_search(leftover, compiled_regex);
+        }
+        else
+        {
+            if (case_sensitive)
+            {
+                if (strstr(leftover, search_text))
+                {
+                    match = true;
+                }
+            }
+            else
+            {
+                if (strcasestr(leftover, search_text))
+                {
+                    match = true;
+                }
+            }
+        }
+        if (match)
+        {
+            std::string line(leftover);
+            std::string snippet = line.length() > 250 ? line.substr(0, 250) : line;
+            results.push_back({file_path, snippet, line_number});
+            // std::cout << "found text: " << file_path << ":" << line_number << ": " << snippet << "\n";
+        }
+    }
+
+    delete[] buffer;
+    delete[] leftover;
+    close(fd);
+}
+
 void search_in_file(const fs::path &file_path, const std::string &search_text, bool case_sensitive, bool whole_word, bool regex, std::vector<SearchResult> &results)
 {
     std::ifstream file(file_path);
@@ -253,13 +415,13 @@ void search_files(const std::string &root_dir, const std::string &file_mask, con
                 {
                     if (search_text.length() > 0)
                     {
-                        search_in_file(entry.path(), search_text, case_sens, whole_word, regex, results);
+                        fast_search_in_file(entry.path(), search_text.c_str(), case_sens, whole_word, regex, results);
                     }
                     else
                     {
                         // just search files
                         results.push_back({entry.path(), "", 0});
-                        std::cout << "found file: " << entry.path() << "\n";
+                        //std::cout << "found file: " << entry.path() << "\n";
                     }
                 }
             }
@@ -653,9 +815,10 @@ int main()
                     }
                     ++sent;
 
-                    if (sent > 30) {
+                    if (sent > 50)
+                    {
                         sent = 0;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     }
 
                     // std::cout << "File " << file_path << ", seqNo=" << seqNo <<", sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
