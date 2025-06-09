@@ -342,7 +342,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             const pending = this.pendingMulti.get(reqId);
             const packet = this.parsePacket(msg);
             if (pending) {
-                pending.chunks.push({ seqNo: packet.seqNo, buffer: packet.payload });
+                if (!pending.chunks.find(obj => obj.seqNo === packet.seqNo)) {
+                    pending.chunks.push({ seqNo: packet.seqNo, buffer: packet.payload });
+                }
 
                 if (packet.flags & this.END_OF_TRANSMISSION_FLAG) { // LAST_PACKET flag
                     console.log('Last packet for type: ', type);
