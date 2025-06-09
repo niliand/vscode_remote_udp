@@ -320,7 +320,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const type = msg.readUInt8(1);
         const flags = msg.readUInt16BE(2);
         const reqId = msg.readUInt16BE(261);
-        console.log(`UDP Client received: ${msg.length} bytes from ${rinfo.address}:${rinfo.port}, type=${type}, reqId=${reqId} flags=${flags}`);
+        //console.log(`UDP Client received: ${msg.length} bytes from ${rinfo.address}:${rinfo.port}, type=${type}, reqId=${reqId} flags=${flags}`);
 
         if (flags & this.ERROR_FLAG) {
             const packet = this.parsePacket(msg);
@@ -347,14 +347,12 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 }
 
                 if (packet.flags & this.END_OF_TRANSMISSION_FLAG) { // LAST_PACKET flag
-                    console.log('Last packet for type: ', type);
 
                     if (type === this.READ_FILE) {
                         // re-request missing packets
                         const res = this.readFileCheckRerequest(reqId, packet.uri, pending.chunks);
                         if (res) {
                             pending.resolve(pending.chunks);
-                            console.log(`Remove from pendingMulti reqId=${reqId}`);
                             this.pendingMulti.delete(reqId);
                         }
                     } else if (type === this.LIST_FILES) {
@@ -362,7 +360,6 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                         const res = this.readDirectoryCheckRerequest(reqId, packet.uri, pending.chunks);
                         if (res) {
                             pending.resolve(pending.chunks);
-                            console.log(`Remove from pendingMulti reqId=${reqId}`);
                             this.pendingMulti.delete(reqId);
                         }
                     } else {
@@ -510,7 +507,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         return this.sendRequestRead(uri).then(chunks => {
             const total = chunks.reduce((acc, buf) => acc + buf.buffer.length, 0);
-            console.log(`Process READ chunks num ${chunks.length}, total=${total}`);
+
             const result = new Uint8Array(total);
             let offset = 0;
             let seqNo = 0;
@@ -524,7 +521,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 result.set(chunk.buffer, offset);
                 offset += chunk.buffer.length;
             }
-            console.log('READ: return result!! size=', result.length);
+
             return result;
         });
     }
@@ -776,7 +773,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         }
 
         if (missingNumbers.length == 0 || missingNumbers.length > 300) {
-            console.log(`READ missingNumbers.length=${missingNumbers.length}, OK`);
+            //console.log(`READ missingNumbers.length=${missingNumbers.length}, OK`);
             return true; // all present or too much missing
         }
 
@@ -802,7 +799,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         for (const num of missingNumbers) {
             buffer.writeUInt16BE(num, offset); offset += 2; // seq no
-            console.log('Send MISS: ', num);
+            //console.log('Send MISS: ', num);
         }
 
         // Send packet
@@ -836,7 +833,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         }
 
         if (missingNumbers.length == 0 || missingNumbers.length > 300) {
-            console.log(`READ-DIR missingNumbers.length=${missingNumbers.length}, OK`);
+            //console.log(`READ-DIR missingNumbers.length=${missingNumbers.length}, OK`);
             return true; // all present or too much missing
         }
 
@@ -862,7 +859,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         for (const num of missingNumbers) {
             buffer.writeUInt16BE(num, offset); offset += 2; // seq no
-            console.log('Send MISS: ', num);
+            //console.log('Send MISS: ', num);
         }
 
         // Send packet
@@ -1344,7 +1341,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                         offset += lineLen;
                     }
 
-                    console.log(`SEARCH: ${path}:${lineNo}  lineLen=${lineLen} line=${lineStr}`);
+                    //console.log(`SEARCH: ${path}:${lineNo}  lineLen=${lineLen} line=${lineStr}`);
                     items.push({ uri: vscode.Uri.parse('udpfs://' + controller.getFolderPath() + '/' + path), line: lineNo, match: lineStr });
                 }
             }
@@ -1380,7 +1377,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     const line: string = chunk.buffer.toString("utf8", offset, offset + lineLen);
                     offset += lineLen;
 
-                    console.log(`DEFINITION: ${line}`);
+                    //console.log(`DEFINITION: ${line}`);
                     items.push(line);
                 }
             }
@@ -1400,7 +1397,7 @@ async function openFileAtSymbol(uri: vscode.Uri, pattern: string) {
 
     // Remove leading/trailing / and ^$ from the pattern
     //const regex = new RegExp(pattern.replace(/^\/\^?/, '').replace(/\$?\/;".*$/, ''));
-    const regex = new RegExp(pattern);
+    //const regex = new RegExp(pattern);
 
     //const lineNumber = doc.getText().split('\n').findIndex(line => regex.test(line));
     const lineNumber = doc.getText().split('\n').findIndex(line => line.indexOf(pattern) != -1);
@@ -1563,7 +1560,6 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(message => {
             if (message.command === 'startSearch') {
                 const { searchText, fileMask, caseSensitive, wholeWord, regex } = message;
-                console.log(`startSearch searchText=[${searchText}], fileMask=[${fileMask}]`);
 
                 if (!fileMask) {
                     vscode.window.showErrorMessage(`File mask is empty.`);
