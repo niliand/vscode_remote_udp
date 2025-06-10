@@ -823,10 +823,11 @@ int main()
                                     }
                                     ++sent;
                 
-                                    if (sent > 50)
+                                    // emprerical delay to to avoid loses for big files
+                                    if (sent > 30)
                                     {
                                         sent = 0;
-                                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                                        std::this_thread::sleep_for(std::chrono::milliseconds(30));
                                     }
                 
                                     // std::cout << "File " << file_path << ", seqNo=" << seqNo <<", sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;

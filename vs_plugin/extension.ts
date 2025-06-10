@@ -507,7 +507,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         return this.sendRequestRead(uri).then(chunks => {
             const total = chunks.reduce((acc, buf) => acc + buf.buffer.length, 0);
-
+            console.log(`READ chunks=${chunks.length}, total=${total}`);
             const result = new Uint8Array(total);
             let offset = 0;
             let seqNo = 0;
@@ -773,7 +773,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         }
 
         if (missingNumbers.length == 0 || missingNumbers.length > 300) {
-            //console.log(`READ missingNumbers.length=${missingNumbers.length}, OK`);
+            console.log(`READ missingNumbers.length=${missingNumbers.length}, OK for ${uriStr}`);
             return true; // all present or too much missing
         }
 
