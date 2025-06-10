@@ -526,9 +526,39 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
+    private sleep(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    private async sendAllPackets(packets: Buffer[]) {
+        // Send all packets
+        let seqNo = 0;
+        for (const pkt of packets) {
+            this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+                if (err) {
+                    console.error('UDP send error:', err);
+                    vscode.window.showErrorMessage(`Failed to write file: ${err.message}`);
+                }
+            });
+
+            seqNo = seqNo + 1;
+
+            if (seqNo % 30 === 0) {
+                await this.sleep(30); // 30ms delay
+            }
+        }
+
+        // duplicate last packet:
+        setTimeout(() => {
+            const pkt = packets[packets.length - 1];
+            this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
+        }, 300);        
+    }
+
     writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean; }): void | Thenable<void> {
         console.log('writeFile called for', uri.toString());
-        const MAX_PAYLOAD_SIZE = 1024 - 300; // 1024 bytes - header size
+
+        const MAX_PAYLOAD_SIZE = 1024 - this.HEADER_SIZE - 32; // 1024 bytes - header size - space for encoding
         const version = 1;
         const type = this.WRITE_FILE;
 
@@ -592,23 +622,10 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             packets.push(packet);
         }
 
-        // Send all packets
-        for (const pkt of packets) {
-            this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST, (err) => {
-                if (err) {
-                    console.error('UDP send error:', err);
-                    vscode.window.showErrorMessage(`Failed to write file: ${err.message}`);
-                }
-            });
-        }
-
         this.writeRequests.set(reqId, packets);
 
-        // duplicate last packet:
-        setTimeout(() => {
-            const pkt = packets[packets.length - 1];
-            this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
-        }, 300);
+        // Send all packets
+        this.sendAllPackets(packets);
 
         // Wait for single final ACK (using pendingRequests)
         return new Promise<void>((resolve, reject) => {
@@ -628,7 +645,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     this.pendingRequests.delete(reqId);
                     reject(new Error('Timeout waiting for writeFile ACK'));
                 }
-            }, 3000 + content.length / 2000);
+            }, 5000 + content.length / 300); // emperical timeout
         });
 
     }
