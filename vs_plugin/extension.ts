@@ -173,7 +173,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('udpfs.searchInThisFolder', async (uri: vscode.Uri) => {
             if (uri) {
-                vscode.commands.executeCommand('workbench.view.udpfsSearchView');
+                //vscode.commands.executeCommand('workbench.view.udpfsSearchView');
+                vscode.commands.executeCommand('workbench.view.extension.udpfsSidebar');
                 vscode.commands.executeCommand('udpfsSearchView.focus');
                 udpfsSearchView.setSearchFolder(uri.path);
             } else {
@@ -185,7 +186,8 @@ export function activate(context: vscode.ExtensionContext) {
                     vscode.window.showWarningMessage('No path entered.');
                     return;
                 }
-                vscode.commands.executeCommand('workbench.view.udpfsSearchView');
+                //vscode.commands.executeCommand('workbench.view.udpfsSearchView');
+                vscode.commands.executeCommand('workbench.view.extension.udpfsSidebar');
                 vscode.commands.executeCommand('udpfsSearchView.focus');
                 udpfsSearchView.setSearchFolder(uriInput);
 
@@ -552,7 +554,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         setTimeout(() => {
             const pkt = packets[packets.length - 1];
             this.udpClient.send(this.encrypt(pkt), this.SERVER_PORT, this.SERVER_HOST);
-        }, 300);        
+        }, 300);
     }
 
     writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean; }): void | Thenable<void> {
@@ -1558,6 +1560,7 @@ function escapeHtml(text: string): string {
 
 class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
+    private _folder?: string;
 
     constructor(private context: vscode.ExtensionContext, private udpFs: UdpFileSystemProvider) { }
 
@@ -1608,19 +1611,24 @@ class UDPFSSearchViewProvider implements vscode.WebviewViewProvider {
             }
         });
 
+        if (this._folder) {
+            this.setSearchFolder(this._folder);
+        }
+
     }
 
     public setSearchFolder(folder: string) {
+        this._folder = folder;
+        if (this._folder.length > controller.getFolderPath().length) {
+            this._folder = this._folder.slice(controller.getFolderPath().length + 1) + '/';
+        }
+        else {
+            if (!this._folder.endsWith('/'))
+                this._folder += '/';
+        }
+
         if (this._view) {
-            let _folder = folder;
-            if (_folder.length > controller.getFolderPath().length) {
-                _folder = _folder.slice(controller.getFolderPath().length + 1) + '/';
-            }
-            else {
-                if (!_folder.endsWith('/'))
-                    _folder += '/';
-            }
-            this._view.webview.postMessage({ command: 'folder', folder: _folder });
+            this._view.webview.postMessage({ command: 'folder', folder: this._folder });
         }
     }
 

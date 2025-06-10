@@ -81,7 +81,7 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
 
 ## How to use extension
 - You can install extension from the Extension Marketplace or using vsix file (e.g. vs_plugin/udp-fs-provider-*.vsix).
-- In VSCode select Extensions, either find "Remote UDP FS Provide" in the list, or Select [...] icon at the top and item "Install from VSIX..."
+- In VSCode select Extensions, either find "Remote UDP FS Provider" in the list, or Select [...] icon at the top and item "Install from VSIX..."
 - Edit your configuration file and add fields listed above (hostname and key)
 - Find and click UDPFS icon in the left pane
 - Alternatively Open Command Palette (Ctrl+P or Ctrl+Cmd+P)
