@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#define MAX_PACKET_SIZE 1024
+
 enum PacketType {
     READ_FILE,
     WRITE_FILE,

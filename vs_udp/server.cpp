@@ -387,7 +387,7 @@ bool isExcluded(const fs::path &path, const std::vector<std::regex> &excludes)
 }
 
 void search_files(const std::string &root_dir, const std::string &file_mask, const std::string &search_text,
-                  std::vector<std::regex> &excludes, bool case_sens, bool whole_word, bool regex, std::vector<SearchResult> &results)
+                  const std::vector<std::regex> &excludes, bool case_sens, bool whole_word, bool regex, std::vector<SearchResult> &results)
 {
     std::regex file_regex = wildcard_to_regex(file_mask);
 
@@ -421,7 +421,7 @@ void search_files(const std::string &root_dir, const std::string &file_mask, con
                     {
                         // just search files
                         results.push_back({entry.path(), "", 0});
-                        //std::cout << "found file: " << entry.path() << "\n";
+                        // std::cout << "found file: " << entry.path() << "\n";
                     }
                 }
             }
@@ -666,7 +666,7 @@ int main()
     std::cout << "Server is running on port " << ntohs(server_addr.sin_port) << std::endl;
     std::cout << "Waiting for packets..." << std::endl;
 
-    uint8_t send_buffer[1024];
+    uint8_t send_buffer[MAX_PACKET_SIZE];
     ssize_t sent_bytes = 0;
     packet_hdr *send_hdr = reinterpret_cast<packet_hdr *>(send_buffer);
 
@@ -778,59 +778,68 @@ int main()
                                      std::istreambuf_iterator<char>());
 
             file.close();
-            send_hdr->flags = 0;
 
-            // Send the file content back to the client
-            size_t file_size = buffer.size();
-            size_t offset = 0;
-            uint16_t seqNo = 0;
-            size_t sent = 0;
-            while (file_size >= 0)
-            {
-                size_t chunk_size = std::min(file_size, static_cast<size_t>(sizeof(send_buffer) - sizeof(packet_hdr)));
-                send_hdr->length = htons(static_cast<uint16_t>(chunk_size));
-                send_hdr->seqNo = htons(seqNo);
+            packet_hdr saved_send_hdr = *send_hdr;
+            std::thread([saved_send_hdr, sockfd, client_addr, addr_len, &cipher, buffer, onlyMissing, missingSeq,
+                           lastSeqNo]{
+                            uint8_t send_buffer[MAX_PACKET_SIZE];
+                            packet_hdr* send_hdr = reinterpret_cast<packet_hdr*>(send_buffer);
+                            memcpy(send_hdr, &saved_send_hdr, sizeof(packet_hdr));
 
-                if (file_size <= (sizeof(send_buffer) - sizeof(packet_hdr)))
-                {
-                    send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
-                }
+                            send_hdr->flags = 0;
 
-                memcpy(send_buffer + sizeof(packet_hdr), buffer.data() + offset, chunk_size);
-
-                if (!onlyMissing || missingSeq.count(seqNo) > 0)
-                {
-                    if (onlyMissing && (seqNo == lastSeqNo))
-                    {
-                        send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
-                    }
-
-                    sent_bytes = crypto_sendto(sockfd, send_buffer,
-                                               sizeof(packet_hdr) + chunk_size, 0,
-                                               (struct sockaddr *)&client_addr, addr_len, cipher);
-                    if (sent_bytes < 0)
-                    {
-                        std::cerr << "Error sending file data" << std::endl;
-                        break; // Exit on send error
-                    }
-                    ++sent;
-
-                    if (sent > 50)
-                    {
-                        sent = 0;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    }
-
-                    // std::cout << "File " << file_path << ", seqNo=" << seqNo <<", sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
-                }
-                file_size -= chunk_size;
-                offset += chunk_size;
-
-                ++seqNo;
-
-                if (file_size == 0)
-                    break;
-            }
+                            // Send the file content back to the client
+                            size_t file_size = buffer.size();
+                            size_t offset = 0;
+                            uint16_t seqNo = 0;
+                            size_t sent = 0;
+                            while (file_size >= 0)
+                            {
+                                size_t chunk_size = std::min(file_size, static_cast<size_t>(sizeof(send_buffer) - sizeof(packet_hdr)));
+                                send_hdr->length = htons(static_cast<uint16_t>(chunk_size));
+                                send_hdr->seqNo = htons(seqNo);
+                
+                                if (file_size <= (sizeof(send_buffer) - sizeof(packet_hdr)))
+                                {
+                                    send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
+                                }
+                
+                                memcpy(send_buffer + sizeof(packet_hdr), buffer.data() + offset, chunk_size);
+                
+                                if (!onlyMissing || missingSeq.count(seqNo) > 0)
+                                {
+                                    if (onlyMissing && (seqNo == lastSeqNo))
+                                    {
+                                        send_hdr->flags = htons(PacketFlags::LAST_DATA); // Set LAST_DATA flag for the last chunk
+                                    }
+                
+                                    int sent_bytes = crypto_sendto(sockfd, send_buffer,
+                                                               sizeof(packet_hdr) + chunk_size, 0,
+                                                               (struct sockaddr *)&client_addr, addr_len, cipher);
+                                    if (sent_bytes < 0)
+                                    {
+                                        std::cerr << "Error sending file data" << std::endl;
+                                        break; // Exit on send error
+                                    }
+                                    ++sent;
+                
+                                    if (sent > 50)
+                                    {
+                                        sent = 0;
+                                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                                    }
+                
+                                    // std::cout << "File " << file_path << ", seqNo=" << seqNo <<", sent successfully, sent " << (sizeof(packet_hdr) + chunk_size) << " bytes." << std::endl;
+                                }
+                                file_size -= chunk_size;
+                                offset += chunk_size;
+                
+                                ++seqNo;
+                
+                                if (file_size == 0)
+                                    break;
+                            }
+            }).detach();
         }
         else if (hdr->type == PacketType::WRITE_FILE)
         {
@@ -883,7 +892,7 @@ int main()
                     std::thread([path, sockfd, send_hdr2,
                                  client_addr, addr_len, &cipher]
                                 {
-                                    uint8_t send_buffer[1024];
+                                    uint8_t send_buffer[MAX_PACKET_SIZE];
                                     std::this_thread::sleep_for(500ms); // 0.5 second delay
 
                                     if (!writeData.count(path))
@@ -1304,7 +1313,6 @@ int main()
                 excludeRegexes.push_back(globToRegex(p));
             }
 
-            std::vector<SearchResult> results;
             auto [pathStr, maskStr] = splitPathAndMask(mask);
 
             std::string folder = std::string(file_path);
@@ -1318,78 +1326,91 @@ int main()
             {
                 maskStr = "*" + maskStr + "*";
             }
-            search_files(folder, maskStr, pattern, excludeRegexes, case_sens, whole_word, regex, results);
 
-            send_hdr->flags = 0;
-
-            // total(1), path_len (1), path (1..255), line no (2), line_len (1), line (1..255)
-
-            size_t count = 0; // inside one packet
-            size_t added = 0; // total
-            uint16_t seqNo = 0;
-            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
-            size_t packed = 1; // first byte is num of entries
-            p = send_buffer + sizeof(packet_hdr) + 1;
-            for (const auto &r : results)
-            {
-                std::string newPath = r.path.substr(strlen(file_path));
-                if (!newPath.empty() && (newPath[0] == '/' || newPath[0] == '\\'))
-                {
-                    newPath.erase(0, 1);
-                }
-
-                size_t entryLen = r.line.length() + newPath.length() + 4; // 2 x len + lineNo(2)
-
-                if ((packed + entryLen) > maxSize)
-                {
-                    // cannot pack next - send packet
-                    p = send_buffer + sizeof(packet_hdr);
-                    *p = count;
-                    ++p;
-                    send_hdr->length = htons(packed + 1);
-                    send_hdr->seqNo = htons(seqNo++);
-                    if (added == results.size())
-                    {
-                        send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                    }
-                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
-                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
-
-                    count = 0;
-                    packed = 1;
-                }
-                *p = newPath.length();
-                ++p;
-                memcpy(p, newPath.c_str(), newPath.length());
-                p += newPath.length();
-                *((uint16_t *)p) = htons(r.lineNo);
-                p += 2;
-                *p = r.line.length();
-                ++p;
-                memcpy(p, r.line.c_str(), r.line.length());
-                p += r.line.length();
-
-                packed += (4 + newPath.length() + r.line.length());
-
-                ++count;
-                ++added;
-            }
-
-            if (count > 0 || results.empty())
-            {
-                // send rest
-
-                // set count:
-                p = send_buffer + sizeof(packet_hdr);
-                *p = count;
-
-                send_hdr->length = htons(packed + 1);
-                send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                send_hdr->seqNo = htons(seqNo++);
-                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
-                              (const struct sockaddr *)&client_addr, addr_len, cipher);
-                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
-            }
+            std::string pat(pattern);
+            packet_hdr saved_send_hdr = *send_hdr;
+            std::string maskStr2 = maskStr;
+            std::string path(file_path);
+            std::thread([folder, maskStr2, pat, excludeRegexes, case_sens, whole_word, regex, saved_send_hdr,
+                         sockfd, client_addr, addr_len, path, &cipher]
+                        {
+                            std::vector<SearchResult> results;
+                            uint8_t send_buffer[MAX_PACKET_SIZE];
+                            packet_hdr* send_hdr = reinterpret_cast<packet_hdr*>(send_buffer);
+                            memcpy(send_hdr, &saved_send_hdr, sizeof(packet_hdr));
+                            search_files(folder, maskStr2, pat, excludeRegexes, case_sens, whole_word, regex, results);
+                
+                            send_hdr->flags = 0;
+                
+                            // total(1), path_len (1), path (1..255), line no (2), line_len (1), line (1..255)
+                
+                            size_t count = 0; // inside one packet
+                            size_t added = 0; // total
+                            uint16_t seqNo = 0;
+                            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
+                            size_t packed = 1; // first byte is num of entries
+                            uint8_t* p = send_buffer + sizeof(packet_hdr) + 1;
+                            for (const auto &r : results)
+                            {
+                                std::string newPath = r.path.substr(path.length());
+                                if (!newPath.empty() && (newPath[0] == '/' || newPath[0] == '\\'))
+                                {
+                                    newPath.erase(0, 1);
+                                }
+                
+                                size_t entryLen = r.line.length() + newPath.length() + 4; // 2 x len + lineNo(2)
+                
+                                if ((packed + entryLen) > maxSize)
+                                {
+                                    // cannot pack next - send packet
+                                    p = send_buffer + sizeof(packet_hdr);
+                                    *p = count;
+                                    ++p;
+                                    send_hdr->length = htons(packed + 1);
+                                    send_hdr->seqNo = htons(seqNo++);
+                                    if (added == results.size())
+                                    {
+                                        send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                                    }
+                                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+                
+                                    count = 0;
+                                    packed = 1;
+                                }
+                                *p = newPath.length();
+                                ++p;
+                                memcpy(p, newPath.c_str(), newPath.length());
+                                p += newPath.length();
+                                *((uint16_t *)p) = htons(r.lineNo);
+                                p += 2;
+                                *p = r.line.length();
+                                ++p;
+                                memcpy(p, r.line.c_str(), r.line.length());
+                                p += r.line.length();
+                
+                                packed += (4 + newPath.length() + r.line.length());
+                
+                                ++count;
+                                ++added;
+                            }
+                
+                            if (count > 0 || results.empty())
+                            {
+                                // send rest
+                
+                                // set count:
+                                p = send_buffer + sizeof(packet_hdr);
+                                *p = count;
+                
+                                send_hdr->length = htons(packed + 1);
+                                send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                                send_hdr->seqNo = htons(seqNo++);
+                                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                              (const struct sockaddr *)&client_addr, addr_len, cipher);
+                                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
+                            } })
+                .detach();
         }
         else if (hdr->type == PacketType::SEARCH_DEFINITION)
         {
@@ -1412,65 +1433,74 @@ int main()
                 continue; // Skip processing this packet
             }
 
-            std::vector<std::string> results = fast_grep_tags(path, pattern);
+            std::string pat(pattern);
+            packet_hdr saved_send_hdr = *send_hdr;
+            std::thread([sockfd, client_addr, addr_len, &cipher, path, pat, saved_send_hdr]
+                        {
+                            uint8_t send_buffer[MAX_PACKET_SIZE];
+                            packet_hdr* send_hdr = reinterpret_cast<packet_hdr*>(send_buffer);
+                            memcpy(send_hdr, &saved_send_hdr, sizeof(packet_hdr));
 
-            send_hdr->flags = 0;
-
-            // total(1), line_len (1), line (1..255)
-
-            size_t count = 0; // inside one packet
-            size_t added = 0; // total
-            uint16_t seqNo = 0;
-            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
-            size_t packed = 1; // first byte is num of entries
-            p = send_buffer + sizeof(packet_hdr) + 1;
-            for (const auto &r : results)
-            {
-                std::string line = r.substr(0, 255);
-                size_t entryLen = line.length() + 1;
-
-                if ((packed + entryLen) > maxSize)
-                {
-                    // cannot pack next - send packet
-                    p = send_buffer + sizeof(packet_hdr);
-                    *p = count;
-                    ++p;
-                    send_hdr->length = htons(packed + 1);
-                    send_hdr->seqNo = htons(seqNo++);
-                    if (added == results.size())
-                    {
-                        send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                    }
-                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
-                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
-
-                    count = 0;
-                    packed = 1;
-                }
-                *p = line.length();
-                ++p;
-                memcpy(p, line.c_str(), line.length());
-                p += line.length();
-
-                packed += (1 + line.length());
-
-                ++count;
-                ++added;
-            }
-
-            if (count > 0 || results.empty())
-            {
-                // set count:
-                p = send_buffer + sizeof(packet_hdr);
-                *p = count;
-
-                send_hdr->length = htons(packed + 1);
-                send_hdr->flags = htons(PacketFlags::LAST_DATA);
-                send_hdr->seqNo = htons(seqNo++);
-                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
-                              (const struct sockaddr *)&client_addr, addr_len, cipher);
-                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
-            }
+                            std::vector<std::string> results = fast_grep_tags(path, pat);
+                
+                            send_hdr->flags = 0;
+                
+                            // total(1), line_len (1), line (1..255)
+                
+                            size_t count = 0; // inside one packet
+                            size_t added = 0; // total
+                            uint16_t seqNo = 0;
+                            size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
+                            size_t packed = 1; // first byte is num of entries
+                            uint8_t* p = send_buffer + sizeof(packet_hdr) + 1;
+                            for (const auto &r : results)
+                            {
+                                std::string line = r.substr(0, 255);
+                                size_t entryLen = line.length() + 1;
+                
+                                if ((packed + entryLen) > maxSize)
+                                {
+                                    // cannot pack next - send packet
+                                    p = send_buffer + sizeof(packet_hdr);
+                                    *p = count;
+                                    ++p;
+                                    send_hdr->length = htons(packed + 1);
+                                    send_hdr->seqNo = htons(seqNo++);
+                                    if (added == results.size())
+                                    {
+                                        send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                                    }
+                                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+                
+                                    count = 0;
+                                    packed = 1;
+                                }
+                                *p = line.length();
+                                ++p;
+                                memcpy(p, line.c_str(), line.length());
+                                p += line.length();
+                
+                                packed += (1 + line.length());
+                
+                                ++count;
+                                ++added;
+                            }
+                
+                            if (count > 0 || results.empty())
+                            {
+                                // set count:
+                                p = send_buffer + sizeof(packet_hdr);
+                                *p = count;
+                
+                                send_hdr->length = htons(packed + 1);
+                                send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                                send_hdr->seqNo = htons(seqNo++);
+                                crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                              (const struct sockaddr *)&client_addr, addr_len, cipher);
+                                std::cout << "Sent last: total=" << added << ", packed=" << packed << ", flags=" << ntohs(send_hdr->flags) << "\n";
+                            } })
+                .detach();
         }
 
         else
