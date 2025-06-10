@@ -844,13 +844,7 @@ int main()
         }
         else if (hdr->type == PacketType::WRITE_FILE)
         {
-            std::cout << "Processing WRITE_FILE request for URI: " << hdr->uri << ", seqNo: " << hdr->seqNo << std::endl;
-
-            if (hdr->seqNo == 2 && ((rand() % 100) < 40))
-            {
-                std::cout << "SKIP\n";
-                continue;
-            }
+            //std::cout << "Processing WRITE_FILE request for URI: " << hdr->uri << ", seqNo: " << hdr->seqNo << std::endl;
 
             bool firstPacket = false;
             if (!writeData.count(file_path))
