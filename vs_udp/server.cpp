@@ -189,6 +189,7 @@ void fast_search_in_file(const fs::path &file_path, const char *search_text, boo
         leftover_size = chunk + total_size - start;
         if (leftover_size > BUFFER_SIZE) {
             // too long line
+            delete[] chunk;
             break;
         }
         memcpy(leftover, start, leftover_size);
@@ -413,6 +414,7 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
         leftover_size = chunk + total_size - start;
         if (leftover_size > BUFFER_SIZE) {
             // too long line
+            delete[] chunk;
             break;
         }
         memcpy(leftover, start, leftover_size);
