@@ -22,6 +22,10 @@ interface SearchResult {
     match: string;
 };
 
+interface MyTerminalLink extends vscode.TerminalLink {
+  data: string; // custom field to hold URI or file path
+}
+
 const FAVORITES_KEY = 'udpfs.favorites';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -200,6 +204,23 @@ export function activate(context: vscode.ExtensionContext) {
     // context.subscriptions.push(
     //vscode.workspace.registerTextSearchProvider(scheme, textSearchProvider)
     // );
+
+    vscode.window.registerTerminalLinkProvider({
+        provideTerminalLinks: (context, token) => {
+            const regex = /udpfs:\/\/[^\s]+/g;
+            const matches = [...context.line.matchAll(regex)];
+            return matches.map(m => ({
+                startIndex: m.index!,
+                length: m[0].length,
+                tooltip: "Open file in UDP FS",
+                data: m[0]
+            }));
+        },
+        handleTerminalLink: async (link) => {
+            const uri = vscode.Uri.parse((link as MyTerminalLink).data);
+            await vscode.commands.executeCommand('vscode.open', uri);
+        }
+    });
 
     console.log('VS Code API version:', vscode.version);
 
