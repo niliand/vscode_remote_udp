@@ -96,3 +96,4 @@ Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settin
     }
 ~~~
 
+![Demo](example1.gif)  

@@ -28,6 +28,9 @@
     }
 ~~~
 
+![Demo](example1.gif)  
+
+
 #### How-to config VScode using settings.json ###
 Open Command Palette (Ctrl+P or Ctrl+Cmd+P). Find "Preferences: Open User Settings (JSON)" and add following lines:
 ~~~
