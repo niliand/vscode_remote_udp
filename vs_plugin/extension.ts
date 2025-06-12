@@ -23,7 +23,7 @@ interface SearchResult {
 };
 
 interface MyTerminalLink extends vscode.TerminalLink {
-  data: string; // custom field to hold URI or file path
+    data: string; // custom field to hold URI or file path
 }
 
 const FAVORITES_KEY = 'udpfs.favorites';
@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('UDP File System Provider is now active!');
     const udpFs = new UdpFileSystemProvider();
     context.subscriptions.push(
-        vscode.workspace.registerFileSystemProvider('udpfs', udpFs, { isReadonly: false })
+        vscode.workspace.registerFileSystemProvider('udpfs', udpFs, { isReadonly: false, isCaseSensitive: true })
     );
 
     // Helper to parse and normalize user input into a valid udpfs URI
@@ -205,22 +205,52 @@ export function activate(context: vscode.ExtensionContext) {
     //vscode.workspace.registerTextSearchProvider(scheme, textSearchProvider)
     // );
 
-    vscode.window.registerTerminalLinkProvider({
-        provideTerminalLinks: (context, token) => {
-            const regex = /udpfs:\/\/[^\s]+/g;
-            const matches = [...context.line.matchAll(regex)];
-            return matches.map(m => ({
-                startIndex: m.index!,
-                length: m[0].length,
-                tooltip: "Open file in UDP FS",
-                data: m[0]
-            }));
-        },
-        handleTerminalLink: async (link) => {
-            const uri = vscode.Uri.parse((link as MyTerminalLink).data);
-            await vscode.commands.executeCommand('vscode.open', uri);
-        }
-    });
+    context.subscriptions.push(
+        vscode.window.registerTerminalLinkProvider({
+            provideTerminalLinks(context, _token) {
+                //console.log(`provideTerminalLinks ${context.line}`);
+                const regex = /(?<=^|\s)(\/|\.\/)?(?:[\w.-]+\/)*[\w.-]+\.\w+(?::\d{1,6}(?::\d{1,6})?)?(?=$|\s|[:;,.])/g;
+                const matches = [...context.line.matchAll(regex)];
+                return matches.map<MyTerminalLink>((match) => ({
+                    startIndex: match.index!,
+                    length: match[0].length,
+                    tooltip: 'Open with udpfs',
+                    data: match[0],
+                }));
+            },
+
+            handleTerminalLink(link) {
+                const originPath = (link as MyTerminalLink).data;
+                const colonIndex = originPath.indexOf(':');
+                let originPathTrim = originPath;
+                if (colonIndex !== -1) {
+                    originPathTrim = originPathTrim.substring(0, colonIndex);
+                }
+                udpFs.searchTextInUdpfs('', originPathTrim).then(results => {
+                    if (results.length == 1) {
+                        // found file
+                        const uri = results[0].uri;
+                        let options: vscode.TextDocumentShowOptions = {};
+
+                        if (colonIndex !== -1) {                            
+                            const match = originPath.match(/^(.*?):(\d+)(?::(\d+))?$/);
+
+                            if (match) {
+                                const line = parseInt(match[2], 10) - 1;
+                                const col = match[3] ? parseInt(match[3], 10) - 1 : 0;
+                                options.selection = new vscode.Range(line, col, line, col);
+                            }
+                        }
+
+                        vscode.commands.executeCommand('vscode.open', uri, options);
+                    } else {
+                        //many results:
+                        showSearchResultsInWebview(results, '');
+                    }
+                });
+            }
+        })
+    );
 
     console.log('VS Code API version:', vscode.version);
 
@@ -530,7 +560,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         return this.sendRequestRead(uri).then(chunks => {
             const total = chunks.reduce((acc, buf) => acc + buf.buffer.length, 0);
-            console.log(`READ chunks=${chunks.length}, total=${total}`);
+            //console.log(`READ chunks=${chunks.length}, total=${total}`);
             const result = new Uint8Array(total);
             let offset = 0;
             let seqNo = 0;

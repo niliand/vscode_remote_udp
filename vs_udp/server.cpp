@@ -368,6 +368,42 @@ void search_files(const std::string &root_dir, const std::string &file_mask,
     }
 }
 
+void search_for_file(const std::string &root_dir, const std::string &file_mask,
+                     const std::vector<std::regex> &excludes, std::vector<SearchResult> &results) {
+
+    try {
+        for (auto it = fs::recursive_directory_iterator(root_dir);
+             it != fs::recursive_directory_iterator(); ++it) {
+            const auto &entry = *it;
+            const auto &path = entry.path();
+
+            if (isExcluded(path, excludes)) {
+                std::cout << "Skip search in " << entry.path().filename().string() << "\n";
+                if (fs::is_directory(path)) {
+                    it.disable_recursion_pending(); // Don't descend into it
+                }
+                continue; // Skip this file/dir
+            }
+            if (entry.is_regular_file()) {
+                std::string rel_path = fs::relative(entry.path(), root_dir).generic_string();
+
+                if (rel_path.find(file_mask) != std::string::npos) {
+                    if (std::none_of(results.begin(), results.end(),
+                                     [path](const SearchResult &p) { return p.path == path; })) {
+                        results.push_back({path, "", 0});
+                    }
+                    // std::cout << "found file: " << entry.path() << "\n";
+                }
+            }
+        }
+    } catch (const fs::filesystem_error &ex) {
+        std::cerr << "Filesystem Error during search:\n";
+        std::cerr << "  What: " << ex.what() << '\n';
+        std::cerr << "  Code value: " << ex.code().value() << '\n';
+        std::cerr << "  Code message: " << ex.code().message() << '\n';
+    }
+}
+
 std::vector<std::string> fast_grep_tags(const std::string &filename, const std::string &pattern) {
     std::vector<std::string> matching_lines;
     size_t pattern_len = pattern.length();
@@ -1187,15 +1223,20 @@ int main() {
             std::string pat(pattern);
             packet_hdr saved_send_hdr = *send_hdr;
             std::string maskStr2 = maskStr;
+            std::string maskOrig(mask);
             std::string path(file_path);
-            std::thread([folder, maskStr2, pat, excludeRegexes, case_sens, whole_word, regex,
-                         saved_send_hdr, sockfd, client_addr, addr_len, path, &cipher] {
+            std::thread([folder, maskStr2, maskOrig, pat, excludeRegexes, case_sens, whole_word,
+                         regex, saved_send_hdr, sockfd, client_addr, addr_len, path, &cipher] {
                 std::vector<SearchResult> results;
                 uint8_t send_buffer[MAX_PACKET_SIZE];
                 packet_hdr *send_hdr = reinterpret_cast<packet_hdr *>(send_buffer);
                 memcpy(send_hdr, &saved_send_hdr, sizeof(packet_hdr));
                 search_files(folder, maskStr2, pat, excludeRegexes, case_sens, whole_word, regex,
                              results);
+
+                if (pat.empty()) {
+                    search_for_file(path, maskOrig, excludeRegexes, results);
+                }
 
                 send_hdr->flags = 0;
 
