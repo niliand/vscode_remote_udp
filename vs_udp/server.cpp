@@ -385,14 +385,14 @@ void search_for_file(const std::string &root_dir, const std::string &file_mask,
                 continue; // Skip this file/dir
             }
             if (entry.is_regular_file()) {
-                std::string rel_path = fs::relative(entry.path(), root_dir).generic_string();
-
-                if (rel_path.find(file_mask) != std::string::npos) {
+               std::string full_path = entry.path().generic_string();
+                if (full_path.size() >= file_mask.size() &&
+                    full_path.compare(full_path.size() - file_mask.size(), file_mask.size(), file_mask) == 0)
+                {
                     if (std::none_of(results.begin(), results.end(),
                                      [path](const SearchResult &p) { return p.path == path; })) {
                         results.push_back({path, "", 0});
                     }
-                    // std::cout << "found file: " << entry.path() << "\n";
                 }
             }
         }
