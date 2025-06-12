@@ -1234,7 +1234,9 @@ int main() {
                 search_files(folder, maskStr2, pat, excludeRegexes, case_sens, whole_word, regex,
                              results);
 
-                if (pat.empty()) {
+                if (pat.empty() && results.empty()) {
+                    // no files found - try by relative path,
+                    // this is used to open links from terminal
                     search_for_file(path, maskOrig, excludeRegexes, results);
                 }
 

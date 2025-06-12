@@ -226,7 +226,14 @@ export function activate(context: vscode.ExtensionContext) {
                 if (colonIndex !== -1) {
                     originPathTrim = originPathTrim.substring(0, colonIndex);
                 }
+
+                if (originPathTrim.startsWith(controller.getFolderPath())) {
+                    originPathTrim = originPathTrim.substring(controller.getFolderPath().length);
+                }
+
+                console.log(`handleTerminalLink: originPath=${originPath}, originPathTrim=${originPathTrim}`);
                 udpFs.searchTextInUdpfs('', originPathTrim).then(results => {
+                    console.log(`handleTerminalLink: results=${results.length}`);
                     if (results.length == 1) {
                         // found file
                         const uri = results[0].uri;
