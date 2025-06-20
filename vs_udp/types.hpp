@@ -16,6 +16,7 @@ enum PacketType {
     RENAME_FILE,
     SEARCH_FILES,     // search files or text in files
     SEARCH_DEFINITION,
+    GIT_STATUS,
 };
 
 enum PacketFlags {
@@ -23,6 +24,7 @@ enum PacketFlags {
     ERROR = 0x02,      // Indicates an error occurred
     FIRST_DATA = 0x04,    // first packet
     CASE_SENSITIVE = 0x08,
+    GIT_OLD = 0x08,    // read git old file
     WHOLE_WORD = 0x10,
     REGEX = 0x20,
     SEQ_NO = 0x40, // read file and send only missing seq numbers

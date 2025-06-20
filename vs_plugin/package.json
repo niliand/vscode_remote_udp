@@ -2,7 +2,7 @@
   "name": "udp-fs-provider",
   "displayName": "Remote - UDP FS Provider",
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
-  "version": "0.0.40",
+  "version": "0.0.44",
   "icon": "icon.png",
   "license": "MIT",
   "engines": {
@@ -57,6 +57,10 @@
       {
         "command": "udpfs.findDefinition",
         "title": "UDP FS: Find definition"
+      },
+      {
+        "command": "udpfsGit.refresh",
+        "title": "UDP FS: Refresh Git Status"
       }
     ],
     "configuration": {

@@ -16,7 +16,7 @@ endif
 
 # Define libraries to link
 # -l specifies the libraries to link against (e.g., -lssl links libssl.a or libssl.so)
-LIBS = -lssl -lcrypto -lpthread
+LIBS = -lssl -lcrypto -lpthread -lgit2
 
 ifeq ($(shell test -f /etc/redhat-release && echo yes),yes)
     LIBS += -lstdc++fs
@@ -24,6 +24,7 @@ endif
 
 # Define the source file
 SRCS = server.cpp
+HDRS = git.hpp types.hpp
 
 # Define the executable name (derived from the source file name)
 TARGET = $(basename $(SRCS))
@@ -34,7 +35,7 @@ TARGET = $(basename $(SRCS))
 all: $(TARGET)
 
 # Rule to build the executable
-$(TARGET): $(SRCS)
+$(TARGET): $(SRCS) $(HDRS)
 	$(CXX) $(CXXFLAGS) $(SRCS) $(LIBS) -o $(TARGET)
 
 # Clean target: removes the compiled executable

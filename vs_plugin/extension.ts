@@ -15,7 +15,6 @@ interface MultiReqData {
     buffer: Buffer
 };
 
-
 interface SearchResult {
     uri: vscode.Uri;
     line: number;
@@ -239,7 +238,7 @@ export function activate(context: vscode.ExtensionContext) {
                         const uri = results[0].uri;
                         let options: vscode.TextDocumentShowOptions = {};
 
-                        if (colonIndex !== -1) {                            
+                        if (colonIndex !== -1) {
                             const match = originPath.match(/^(.*?):(\d+)(?::(\d+))?$/);
 
                             if (match) {
@@ -259,6 +258,12 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand('udpfsGit.refresh', async () => {
+            udpFs.refreshGitStatus();
+        })
+    );
+
     console.log('VS Code API version:', vscode.version);
 
     // Add button to status bar
@@ -268,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
     // statusBarItem.tooltip = 'Open UDP File System Root Folder';
     // statusBarItem.show();
     // context.subscriptions.push(statusBarItem);
-}
+} // activate()
 
 export function deactivate() {
     console.log('UDP File System Provider is now deactivated!');
@@ -292,6 +297,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly RENAME_FILE = 6;
     private readonly SEARCH_FILES = 7;
     private readonly SEARCH_DEFINITION = 8;
+    private readonly GIT_STATUS = 9;
 
     private readonly SERVER_PORT = 9022;
     private SERVER_HOST = '127.0.0.1';
@@ -302,6 +308,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly ERROR_FLAG = 0x02;
     private readonly FIRST_DATA = 0x04;
     private readonly CASE_SENSITIVE = 0x08;
+    private readonly GIT_OLD = 0x08;
     private readonly WHOLE_WORD = 0x10;
     private readonly REGEX_WORD = 0x20;
     private readonly SEQ_NO = 0x40;
@@ -310,6 +317,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private key!: Buffer;
 
     private _reqId = 1;
+
+    private sc: vscode.SourceControl;
+    private sc_changes: vscode.SourceControlResourceGroup;
 
     //public static rootFolder?: string;
 
@@ -344,6 +354,16 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         // });
 
         this.udpClient.on('message', this.onClientMessage);
+
+        this.udpClient.on('error', (err) => {
+            console.error('Socket error:', err);
+        });
+
+        this.sc = vscode.scm.createSourceControl('udpfs-git', 'UDPFS Git'); //, vscode.Uri.parse('udpfs:///'));
+        this.sc_changes = this.sc.createResourceGroup('changes', 'Changes');
+        this.sc_changes.resourceStates = [{
+            resourceUri: vscode.Uri.parse(`udpfs://No changes. Use command to refresh`)}];
+
     }
 
     public updateConfig(config: vscode.WorkspaceConfiguration) {
@@ -398,7 +418,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
         }
 
-        if (type === this.READ_FILE || type === this.LIST_FILES || type === this.SEARCH_FILES || type === this.SEARCH_DEFINITION) {
+        if (type === this.READ_FILE || type === this.LIST_FILES || type === this.SEARCH_FILES ||
+            type === this.SEARCH_DEFINITION || type == this.GIT_STATUS) {
             const pending = this.pendingMulti.get(reqId);
             const packet = this.parsePacket(msg);
             if (pending) {
@@ -428,7 +449,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                     }
                 }
             } else {
-                console.log(`Unexpected multi response with reqId=${reqId}`);
+                //console.log(`Unexpected multi response with reqId=${reqId}`);
             }
         } else {
 
@@ -447,7 +468,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 }
                 this.pendingRequests.delete(reqId);
             } else {
-                console.log(`Unexpected response with reqId=${reqId}`);
+                //console.log(`Unexpected response with reqId=${reqId}`);
             }
         }
     };
@@ -472,12 +493,23 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     stat(uri: vscode.Uri): vscode.FileStat | Thenable<vscode.FileStat> {
         console.log('stat called for', uri.toString());
 
+        const isGitOld = uri.query === 'git_old';
+
+        if (isGitOld) {
+            return {
+                type: vscode.FileType.File,
+                ctime: 0,
+                mtime: 0,
+                size: 1
+            };
+        }
+
         return this.sendRequestStat(uri).then((buffer) => {
             const packet = this.parsePacket(buffer);
             const fileInfo = this.parseFileInfo(packet.payload);
 
             return {
-                type: fileInfo.type as vscode.FileType, // === 1 ? vscode.FileType.File : vscode.FileType.Directory,
+                type: fileInfo.type as vscode.FileType,
                 size: fileInfo.size,
                 ctime: fileInfo.ctime.getTime(),
                 mtime: fileInfo.mtime.getTime(),
@@ -565,9 +597,11 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     readFile(uri: vscode.Uri): Uint8Array | Thenable<Uint8Array> {
         console.log('readFile called for', uri.toString());
 
-        return this.sendRequestRead(uri).then(chunks => {
+        const isGitOld = uri.query === 'git_old';
+
+        return this.sendRequestRead(uri, isGitOld).then(chunks => {
             const total = chunks.reduce((acc, buf) => acc + buf.buffer.length, 0);
-            //console.log(`READ chunks=${chunks.length}, total=${total}`);
+            console.log(`READ for ${uri.toString()}, chunks=${chunks.length}, total=${total}`);
             const result = new Uint8Array(total);
             let offset = 0;
             let seqNo = 0;
@@ -829,6 +863,90 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         }
     }
 
+    public refreshGitStatus() {
+        if (!controller.getFolderPath()) {
+            vscode.window.showErrorMessage(`UDP FS: Folder is not opened`);
+            return;
+        }
+
+        this.getGitStatus().then(items => {
+            if (items) {
+                this.sc_changes.resourceStates = items.map(file => ({
+                    resourceUri: vscode.Uri.parse(`udpfs://${controller.getFolderPath()}/${file.path}`),
+                    decorations: {
+                        tooltip: file.type,
+                        iconPath: new vscode.ThemeIcon('diff')
+                    },
+                    command: {
+                        command: 'vscode.diff',
+                        title: 'Open Diff',
+                        arguments: [
+                            //vscode.Uri.parse(`udpfs://${controller.getFolderPath()}/${file.path}?git_old`),
+                            vscode.Uri.parse(`udpfs:///${file.path}?git_old`),
+                            vscode.Uri.parse(`udpfs://${controller.getFolderPath()}/${file.path}`),
+                            'Diff: ' + file.path
+                        ]
+                    }
+                }));
+
+                if (items.length == 0) {
+                    this.sc_changes.resourceStates = [{
+                        resourceUri: vscode.Uri.parse(`udpfs://No changes. Use command to refresh`)}];
+                }
+            }
+        });
+    }
+
+    private getGitStatus() {
+
+        return this.sendRequestGitStatus(controller.getFolderPath()).then(chunks => {
+            const items: { path: string, type: string }[] = [];
+
+            let seqNo = 0;
+            chunks.sort((a, b) => a.seqNo - b.seqNo);
+            for (const chunk of chunks) {
+                if (chunk.seqNo != seqNo) {
+                    console.error(`Git status: Wrong seqNo: ${chunk.seqNo} != ${seqNo}`);
+                    vscode.window.showErrorMessage(`UDP FS: Cannot obtain git status`);
+                    return;
+                }
+                seqNo = seqNo + 1;
+
+                let offset = 0;
+                const totalItems = chunk.buffer.readUInt8(offset);
+                offset += 1;
+
+                for (let i = 0; i < totalItems; i++) {
+                    if (offset + 2 > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading item header");
+                    }
+
+                    const nameLen = chunk.buffer.readUInt8(offset);
+                    offset += 1;
+
+                    if (offset + nameLen > chunk.buffer.length) {
+                        throw new Error("Buffer ended unexpectedly while reading filename");
+                    }
+
+                    const name: string = chunk.buffer.toString("utf8", offset, offset + nameLen);
+                    offset += nameLen;
+
+                    const fileType = chunk.buffer.readUInt8(offset);
+                    offset += 1;
+
+                    if (fileType == 1) // modified
+                    {
+                        items.push({ path: name, type: 'Modified' });
+                    }
+                }
+            }
+
+            return items;
+        });
+
+
+    }
+
     // return true to process chunks, false - new request sent
     private readFileCheckRerequest(reqId: number, uriStr: string, chunks: MultiReqData[]): boolean {
         const existingSequences = new Set<number>();
@@ -951,7 +1069,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
 
     private readTimeoutHandler(reqId: number, packets: number, reject: (reason?: any) => void) {
-        console.log(`readTimeoutHandler reqId=${reqId}, packets=${packets}`);
+
         if (this.pendingMulti.has(reqId)) {
             const pending = this.pendingMulti.get(reqId);
 
@@ -972,7 +1090,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         }
     }
 
-    private sendRequestRead(uri: vscode.Uri): Promise<MultiReqData[]> {
+    // isGitOld flag means - read old (unmodified) file using git,
+    // uri in this case is relative path
+    private sendRequestRead(uri: vscode.Uri, isGitOld: boolean = false): Promise<MultiReqData[]> {
         const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
 
         const reqId = this.getReqId();
@@ -981,19 +1101,30 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         let offset = 0;
         buffer.writeUInt8(this.version, offset++);            // version
         buffer.writeUInt8(this.READ_FILE, offset++);               // type
-        buffer.writeUInt16BE(0, offset); offset += 2; // flags (big-endian)
+        let flags = 0;
+        if (isGitOld) {
+            flags += this.GIT_OLD;
+        }
+        buffer.writeUInt16BE(flags, offset); offset += 2; // flags (big-endian)
 
         // Write URI string into buffer
-        const uriStr = uri.path; // or uri.fsPath
+        const uriStr = isGitOld ? controller.getFolderPath() : uri.path;
         const uriBytes = Buffer.from(uriStr, 'utf8');
         if (uriBytes.length > 255) throw new Error("URI too long");
         uriBytes.copy(buffer, offset);
         offset += 255; // move past URI (rest will be zero-padded automatically)
 
+        console.log(`READ: path=${uri.path}, fsPath=${uri.fsPath}, str=${uri.toString()}`);
+
+        const uriStrPath = uri.path.slice(1); // cut first / 
+        const uriBytesPath = Buffer.from(uriStrPath, 'utf8');
+
         // Write length (can be updated to include payload later)
-        buffer.writeUInt16BE(0, offset); offset += 2;
+        buffer.writeUInt16BE(isGitOld ? uriBytesPath.length : 0, offset); offset += 2;
 
         buffer.writeUInt16BE(reqId, offset); offset += 2;
+
+        const packet = isGitOld ? Buffer.concat([buffer, uriBytesPath]) : buffer;    // full packet
 
         return new Promise((resolve, reject) => {
 
@@ -1004,7 +1135,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             });
 
             // Send packet
-            this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+            this.udpClient.send(this.encrypt(packet), this.SERVER_PORT, this.SERVER_HOST, (err) => {
                 if (err) {
                     return reject(err);
                 }
@@ -1056,6 +1187,48 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
     }
 
+    private sendRequestGitStatus(uriStr: string): Promise<MultiReqData[]> {
+        const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
+
+        const reqId = this.getReqId();
+
+        // Fill header fields
+        let offset = 0;
+        buffer.writeUInt8(this.version, offset++);            // version
+        buffer.writeUInt8(this.GIT_STATUS, offset++);               // type
+        buffer.writeUInt16BE(0, offset); offset += 2; // flags (big-endian)
+
+        // Write URI string into buffer
+        const uriBytes = Buffer.from(uriStr, 'utf8');
+        if (uriBytes.length > 255) throw new Error("URI too long");
+        uriBytes.copy(buffer, offset);
+        offset += 255; // move past URI (rest will be zero-padded automatically)
+
+        // Write length (can be updated to include payload later)
+        buffer.writeUInt16BE(0, offset); offset += 2;
+
+        buffer.writeUInt16BE(reqId, offset); offset += 2;
+
+        return new Promise((resolve, reject) => {
+
+            this.pendingMulti.set(reqId, {
+                resolve,
+                reject,
+                chunks: []
+            });
+
+            // Send packet
+            this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+            });
+
+            setTimeout(() => { this.readTimeoutHandler(reqId, 0, reject); }, 10000);
+        });
+    }
+
+
     sendRequestStat(uri: vscode.Uri): Promise<Buffer> {
 
         return new Promise((resolve, reject) => {
@@ -1087,8 +1260,9 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             buffer.writeUInt16BE(reqId, offset); offset += 2;
 
             // Send packet
-            this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err) => {
+            this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST, (err, bytes) => {
                 if (err) {
+                    console.error('Send error:', err.message, err.name);
                     return reject(err);
                 }
             });

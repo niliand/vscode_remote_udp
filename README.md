@@ -21,7 +21,7 @@ First install dependencies:
 Debian/Ubuntu:
 ~~~
 sudo apt update
-sudo apt install build-essential libssl-dev
+sudo apt install build-essential libssl-dev libgit2-dev
 ~~~
 
 RedHat/Centos:

@@ -28,7 +28,8 @@
 
 #include "AESCipher.hpp"
 #include "config.hpp"
-#include "types.hpp" // Include the types header for packet_hdr and enums
+#include "git.hpp"
+#include "types.hpp"
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals; // Enables 1s, 500ms, etc. literals
@@ -385,10 +386,10 @@ void search_for_file(const std::string &root_dir, const std::string &file_mask,
                 continue; // Skip this file/dir
             }
             if (entry.is_regular_file()) {
-               std::string full_path = entry.path().generic_string();
+                std::string full_path = entry.path().generic_string();
                 if (full_path.size() >= file_mask.size() &&
-                    full_path.compare(full_path.size() - file_mask.size(), file_mask.size(), file_mask) == 0)
-                {
+                    full_path.compare(full_path.size() - file_mask.size(), file_mask.size(),
+                                      file_mask) == 0) {
                     if (std::none_of(results.begin(), results.end(),
                                      [path](const SearchResult &p) { return p.path == path; })) {
                         results.push_back({path, "", 0});
@@ -569,6 +570,8 @@ int main() {
 
     std::srand(static_cast<unsigned int>(std::time(NULL)));
 
+    git_init();
+
     // Create UDP socket
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         std::cerr << "Socket creation failed" << std::endl;
@@ -675,23 +678,44 @@ int main() {
         if (hdr->type == PacketType::READ_FILE) {
             std::cout << "Processing READ_FILE request for URI: " << hdr->uri << std::endl;
 
-            // Open the file in binary mode
-            std::ifstream file(file_path, std::ios::binary);
-            if (!file) {
-                std::cerr << "Error: Could not open file " << file_path << std::endl;
-                reply_error(sockfd, client_addr, addr_len, hdr->type,
-                            std::string(std::string("File not found: ") + file_path).c_str(),
-                            cipher);
-                continue; // Skip processing this packet
+            char gitfilepath[255] = {0};
+            bool git_old = false;
+
+            if (hdr->flags & PacketFlags::GIT_OLD) {
+                memcpy(gitfilepath, recv_buffer + sizeof(packet_hdr), hdr->length);
+                git_old = true;
+                std::cout << "    file: " << gitfilepath << "\n";
             }
 
-            auto size = fs::is_regular_file(file_path) ? fs::file_size(file_path) : 0;
-            if (size > 45000000) {
-                std::cerr << "Error: too big file to read: " << size << std::endl;
-                reply_error(sockfd, client_addr, addr_len, hdr->type,
-                            std::string(std::string("File too big to read: ") + file_path).c_str(),
-                            cipher);
-                continue; // Skip processing this packet
+            std::vector<char> buffer;
+
+            if (git_old) {
+                buffer = git_get_unmodified_file(file_path, gitfilepath);
+            } else {
+                // Open the file in binary mode
+                std::ifstream file(file_path, std::ios::binary);
+                if (!file) {
+                    std::cerr << "Error: Could not open file " << file_path << std::endl;
+                    reply_error(sockfd, client_addr, addr_len, hdr->type,
+                                std::string(std::string("File not found: ") + file_path).c_str(),
+                                cipher);
+                    continue; // Skip processing this packet
+                }
+
+                auto size = fs::is_regular_file(file_path) ? fs::file_size(file_path) : 0;
+                if (size > 45000000) {
+                    std::cerr << "Error: too big file to read: " << size << std::endl;
+                    reply_error(
+                        sockfd, client_addr, addr_len, hdr->type,
+                        std::string(std::string("File too big to read: ") + file_path).c_str(),
+                        cipher);
+                    continue; // Skip processing this packet
+                }
+
+                buffer = std::vector<char>((std::istreambuf_iterator<char>(file)),
+                                           std::istreambuf_iterator<char>());
+
+                file.close();
             }
 
             std::unordered_set<int> missingSeq;
@@ -712,11 +736,6 @@ int main() {
                 std::cout << " lastSeqNo=" << lastSeqNo << "\n";
             }
 
-            // Read the file into a buffer
-            std::vector<char> buffer((std::istreambuf_iterator<char>(file)),
-                                     std::istreambuf_iterator<char>());
-
-            file.close();
 
             packet_hdr saved_send_hdr = *send_hdr;
             std::thread([saved_send_hdr, sockfd, client_addr, addr_len, &cipher, buffer,
@@ -1325,7 +1344,7 @@ int main() {
             if (!fs::exists(path)) {
                 std::cerr << "Path " << path << " does not exist.\n";
                 reply_error(sockfd, client_addr, addr_len, hdr->type,
-                            "'.tags' is not exists, run: ctags -R -f .tags", cipher);
+                            "'.tags' does not exist, run: ctags -R -f .tags", cipher);
                 continue; // Skip processing this packet
             }
 
@@ -1393,9 +1412,83 @@ int main() {
                               << ", flags=" << ntohs(send_hdr->flags) << "\n";
                 }
             }).detach();
-        }
+        } else if (hdr->type == PacketType::GIT_STATUS) {
+            std::string path = std::string(file_path);
+            ;
 
-        else {
+            if (!fs::exists(path + "/.git")) {
+                std::cerr << "No git repo in: " << path << "\n";
+                reply_error(sockfd, client_addr, addr_len, hdr->type,
+                            "'.git' does not exist, not git repo found", cipher);
+                continue; // Skip processing this packet
+            }
+
+            packet_hdr saved_send_hdr = *send_hdr;
+            std::thread([sockfd, client_addr, addr_len, &cipher, path, saved_send_hdr] {
+                uint8_t send_buffer[MAX_PACKET_SIZE];
+                packet_hdr *send_hdr = reinterpret_cast<packet_hdr *>(send_buffer);
+                memcpy(send_hdr, &saved_send_hdr, sizeof(packet_hdr));
+
+                std::vector<StatusItem> results = git_get_status(path);
+
+                send_hdr->flags = 0;
+
+                // total(1), line_len (1), line (1..255), type(1) see GitFileStatus
+
+                size_t count = 0; // inside one packet
+                size_t added = 0; // total
+                uint16_t seqNo = 0;
+                size_t maxSize = sizeof(send_buffer) - sizeof(packet_hdr);
+                size_t packed = 1; // first byte is num of entries
+                uint8_t *p = send_buffer + sizeof(packet_hdr) + 1;
+                for (const auto &r : results) {
+                    std::string line = r.path.substr(0, 255);
+                    size_t entryLen = line.length() + 2; // plus len and type
+
+                    if ((packed + entryLen) > maxSize) {
+                        // cannot pack next - send packet
+                        p = send_buffer + sizeof(packet_hdr);
+                        *p = count;
+                        ++p;
+                        send_hdr->length = htons(packed + 1);
+                        send_hdr->seqNo = htons(seqNo++);
+                        if (added == results.size()) {
+                            send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                        }
+                        crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                      (const struct sockaddr *)&client_addr, addr_len, cipher);
+
+                        count = 0;
+                        packed = 1;
+                    }
+                    *p = line.length();
+                    ++p;
+                    memcpy(p, line.c_str(), line.length());
+                    p += line.length();
+                    *p = r.type;
+                    ++p;
+
+                    packed += (2 + line.length()); // 2 - len and type
+
+                    ++count;
+                    ++added;
+                }
+
+                if (count > 0 || results.empty()) {
+                    // set count:
+                    p = send_buffer + sizeof(packet_hdr);
+                    *p = count;
+
+                    send_hdr->length = htons(packed + 1);
+                    send_hdr->flags = htons(PacketFlags::LAST_DATA);
+                    send_hdr->seqNo = htons(seqNo++);
+                    crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + packed, 0,
+                                  (const struct sockaddr *)&client_addr, addr_len, cipher);
+                    std::cout << "Sent last: total=" << added << ", packed=" << packed
+                              << ", flags=" << ntohs(send_hdr->flags) << "\n";
+                }
+            }).detach();
+        } else {
             std::cerr << "Unknown packet type received" << std::endl;
         }
     }
