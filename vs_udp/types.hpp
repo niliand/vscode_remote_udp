@@ -17,6 +17,7 @@ enum PacketType {
     SEARCH_FILES,     // search files or text in files
     SEARCH_DEFINITION,
     GIT_STATUS,
+    KEEP_ALIVE,
 };
 
 enum PacketFlags {

@@ -675,7 +675,14 @@ int main() {
         memcpy(send_hdr->uri, hdr->uri, sizeof(hdr->uri));
 
         // Process the packet based on its type
-        if (hdr->type == PacketType::READ_FILE) {
+        if (hdr->type == PacketType::KEEP_ALIVE) {
+            // just reply back
+            send_hdr->flags = 0;
+            send_hdr->length = 0;
+            crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(file_info), 0,
+                          (const struct sockaddr *)&client_addr, addr_len, cipher);
+        }
+        else if (hdr->type == PacketType::READ_FILE) {
             std::cout << "Processing READ_FILE request for URI: " << hdr->uri << std::endl;
 
             char gitfilepath[255] = {0};

@@ -298,6 +298,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
     private readonly SEARCH_FILES = 7;
     private readonly SEARCH_DEFINITION = 8;
     private readonly GIT_STATUS = 9;
+    private readonly KEEP_ALIVE = 10;
 
     private readonly SERVER_PORT = 9022;
     private SERVER_HOST = '127.0.0.1';
@@ -337,6 +338,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
     private writeRequests = new Map<number, Buffer[]>();
 
+    public keepAliveInterval;
+
     constructor() {
         const config = vscode.workspace.getConfiguration('udpfs');
         this.updateConfig(config);
@@ -362,8 +365,30 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         this.sc = vscode.scm.createSourceControl('udpfs-git', 'UDPFS Git'); //, vscode.Uri.parse('udpfs:///'));
         this.sc_changes = this.sc.createResourceGroup('changes', 'Changes');
         this.sc_changes.resourceStates = [{
-            resourceUri: vscode.Uri.parse(`udpfs://No changes. Use command to refresh`)}];
+            resourceUri: vscode.Uri.parse(`udpfs://No changes. Use command to refresh`)
+        }];
 
+        this.keepAliveInterval = setInterval(() => this.sendKeepAlive(), 20 * 1000);
+
+        this.udpClient.on('close', () => {
+            clearInterval(this.keepAliveInterval);
+        });
+
+    }
+    
+
+    private sendKeepAlive() {
+        console.log(`sendKeepAlive: size=${this.HEADER_SIZE}`);
+        const buffer = Buffer.alloc(this.HEADER_SIZE); // Allocate exact size
+
+        const reqId = 0; // not needed
+
+        // Fill header fields
+        let offset = 0;
+        buffer.writeUInt8(this.version, offset++);            // version
+        buffer.writeUInt8(this.KEEP_ALIVE, offset++);               // type
+
+        this.udpClient.send(this.encrypt(buffer), this.SERVER_PORT, this.SERVER_HOST);
     }
 
     public updateConfig(config: vscode.WorkspaceConfiguration) {
@@ -401,6 +426,11 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         const flags = msg.readUInt16BE(2);
         const reqId = msg.readUInt16BE(261);
         //console.log(`UDP Client received: ${msg.length} bytes from ${rinfo.address}:${rinfo.port}, type=${type}, reqId=${reqId} flags=${flags}`);
+
+        if (type === this.KEEP_ALIVE) {
+            //just skip
+            return;
+        }
 
         if (flags & this.ERROR_FLAG) {
             const packet = this.parsePacket(msg);
@@ -891,7 +921,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
 
                 if (items.length == 0) {
                     this.sc_changes.resourceStates = [{
-                        resourceUri: vscode.Uri.parse(`udpfs://No changes. Use command to refresh`)}];
+                        resourceUri: vscode.Uri.parse(`udpfs://No changes. Use command to refresh`)
+                    }];
                 }
             }
         });
