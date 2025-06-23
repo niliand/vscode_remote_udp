@@ -652,7 +652,13 @@ int main() {
         hdr->length = ntohs(hdr->length);
         hdr->seqNo = ntohs(hdr->seqNo);
 
-        std::cout << "# Received packet: "
+        auto now = std::chrono::system_clock::now();
+        std::time_t now_time_t = std::chrono::system_clock::to_time_t(now);
+
+        // Convert to local time (tm structure)
+        std::tm *now_tm = std::localtime(&now_time_t);
+
+        std::cout << std::put_time(now_tm, "%Y-%m-%d %H:%M:%S") << ": RX: "
                   << "Version: " << static_cast<int>(hdr->version) << ", "
                   << "Type: " << static_cast<int>(hdr->type) << ", "
                   << "Flags: " << hdr->flags << ", "
@@ -681,8 +687,7 @@ int main() {
             send_hdr->length = 0;
             crypto_sendto(sockfd, send_buffer, sizeof(packet_hdr) + sizeof(file_info), 0,
                           (const struct sockaddr *)&client_addr, addr_len, cipher);
-        }
-        else if (hdr->type == PacketType::READ_FILE) {
+        } else if (hdr->type == PacketType::READ_FILE) {
             std::cout << "Processing READ_FILE request for URI: " << hdr->uri << std::endl;
 
             char gitfilepath[255] = {0};
@@ -742,7 +747,6 @@ int main() {
                 }
                 std::cout << " lastSeqNo=" << lastSeqNo << "\n";
             }
-
 
             packet_hdr saved_send_hdr = *send_hdr;
             std::thread([saved_send_hdr, sockfd, client_addr, addr_len, &cipher, buffer,
