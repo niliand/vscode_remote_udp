@@ -2,7 +2,9 @@
 #define _GIT_HPP_
 
 #include <cstdint>
+#ifdef USE_LIB2GIT
 #include <git2.h>
+#endif
 #include <vector>
 
 struct StatusItem {
@@ -13,15 +15,32 @@ struct StatusItem {
 enum GitFileStatus { ADDED, MODIFIED, DELETED };
 
 bool git_init() {
+#ifdef USE_LIB2GIT    
     git_libgit2_init();
+#endif    
     return true;
 }
 
+std::string exec(const char *cmd) {
+    char buffer[128];
+    std::string result = "";
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+    if (!pipe) {
+        std::cerr << "popen() failed!\n";
+        return "";
+    }
+    while (fgets(buffer, sizeof buffer, pipe.get()) != nullptr) {
+        result += buffer;
+    }
+    return result;
+}
+
 std::vector<StatusItem> git_get_status(const std::string &path) {
+    std::vector<StatusItem> res;
+#ifdef USE_LIB2GIT
     git_repository *repo = nullptr;
     git_status_list *status_list = nullptr;
     const char *repo_path = path.c_str();
-    std::vector<StatusItem> res;
 
     do {
         int error = git_repository_open(&repo, repo_path);
@@ -80,12 +99,28 @@ std::vector<StatusItem> git_get_status(const std::string &path) {
     if (repo) {
         git_repository_free(repo);
     }
+#else
+    std::string cmd = "git -C " + path + " --no-pager diff --name-only";
+    std::string modified_files = exec(cmd.c_str());
+    std::cout << "Modified files:\n" << modified_files << std::endl;
+
+    std::stringstream ss(modified_files);
+    std::string line;
+    
+    while (std::getline(ss, line)) {
+        if (!line.empty()) {  // Skip empty lines
+            res.push_back({line, GitFileStatus::MODIFIED});
+        }
+    }
+    
+#endif
 
     return res;
 }
 
 std::vector<char> git_get_unmodified_file(const char *repo_path, const char *file_path) {
 
+#ifdef USE_LIB2GIT
     int error;
     git_repository *repo = nullptr;
     git_reference *head_ref = nullptr;
@@ -154,6 +189,27 @@ std::vector<char> git_get_unmodified_file(const char *repo_path, const char *fil
         git_off_t content_len = git_blob_rawsize(blob);
 
         std::vector<char> file_data(content, content + content_len);
+
+        // Free all allocated libgit2 objects in reverse order of allocation
+        if (blob) {
+            git_blob_free(blob);
+        }
+        if (tree_entry) {
+            git_tree_entry_free(tree_entry);
+        }
+        if (tree) {
+            git_tree_free(tree);
+        }
+        if (head_commit) {
+            git_commit_free(head_commit);
+        }
+        if (head_ref) {
+            git_reference_free(head_ref);
+        }
+        if (repo) {
+            git_repository_free(repo);
+        }
+
         return file_data;
 
     } while (false);
@@ -179,6 +235,13 @@ std::vector<char> git_get_unmodified_file(const char *repo_path, const char *fil
     }
 
     return {};
+
+#else
+    std::string cmd = "git -C " + std::string(repo_path) + std::string(" show HEAD:") + std::string(file_path);
+    std::string original_content = exec(cmd.c_str());
+    std::vector<char> res(original_content.begin(), original_content.end());
+    return res;
+#endif
 }
 
 #endif //_GIT_HPP_

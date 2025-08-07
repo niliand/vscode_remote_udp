@@ -16,7 +16,9 @@ endif
 
 # Define libraries to link
 # -l specifies the libraries to link against (e.g., -lssl links libssl.a or libssl.so)
-LIBS = -lssl -lcrypto -lpthread -lgit2
+LIBS = -lssl -lcrypto -lpthread 
+
+#LIBS += -lgit2
 
 ifeq ($(shell test -f /etc/redhat-release && echo yes),yes)
     LIBS += -lstdc++fs

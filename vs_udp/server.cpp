@@ -1425,12 +1425,11 @@ int main() {
             }).detach();
         } else if (hdr->type == PacketType::GIT_STATUS) {
             std::string path = std::string(file_path);
-            ;
 
             if (!fs::exists(path + "/.git")) {
                 std::cerr << "No git repo in: " << path << "\n";
                 reply_error(sockfd, client_addr, addr_len, hdr->type,
-                            "'.git' does not exist, not git repo found", cipher);
+                            "'.git' does not exist, no git repo found", cipher);
                 continue; // Skip processing this packet
             }
 

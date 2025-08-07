@@ -1255,7 +1255,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
                 }
             });
 
-            setTimeout(() => { this.readTimeoutHandler(reqId, 0, reject); }, 10000);
+            setTimeout(() => { this.readTimeoutHandler(reqId, 0, reject); }, 20000);
         });
     }
 
