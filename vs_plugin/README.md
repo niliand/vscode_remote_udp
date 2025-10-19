@@ -18,7 +18,7 @@
 - Find and click UDPFS icon in the left pane
 - Or use Command Palette (Ctrl+P or Ctrl+Cmd+P)
 - Find command "**UDP FS: Open File**" or "**UDP FS: Open Folder**"
-- Enter URI with prefix udpfs:// e.g. for folder: udpfs:///home/username/my_project/
+- Enter path, e.g. for folder: /home/username/my_project/
 - The "**UDP FS: Search Text in Files**" command helps you find text within files. To search only for file names, simply leave the search text field blank.
 - NOTE: Add search excludes to skip search in unrelated folders. In Command Palette find "Preferences: Open User Settings (JSON)" and add exludes like:
 ~~~

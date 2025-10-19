@@ -37,9 +37,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Helper to parse and normalize user input into a valid udpfs URI
     function parseUdpfsUri(input: string | undefined): vscode.Uri | undefined {
         if (!input) return undefined;
+
         const normalized = input.startsWith('udpfs://') ? input : `udpfs://${input}`;
+        const corrected = normalized.replace(/\\/g, "/");
         try {
-            return vscode.Uri.parse(normalized);
+            return vscode.Uri.parse(corrected);
         } catch (e) {
             vscode.window.showErrorMessage(`Invalid URI: ${normalized}`);
             return undefined;
@@ -1584,6 +1586,8 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             return Promise.resolve([]);
         }
 
+        const correctedMask = mask.replace(/\\/g, "/")
+
         const filesExclude = vscode.workspace.getConfiguration().get<{ [key: string]: boolean }>('files.exclude') ?? {};
         const searchExclude = vscode.workspace.getConfiguration().get<{ [key: string]: boolean }>('search.exclude') ?? {};
 
@@ -1592,7 +1596,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
             .filter(([_, enabled]) => enabled)
             .map(([pattern]) => pattern);
 
-        return this.sendSearchFilesReq(pattern, mask, excludesArr, caseSensitive, wholeWord, regex).then(chunks => {
+        return this.sendSearchFilesReq(pattern, correctedMask, excludesArr, caseSensitive, wholeWord, regex).then(chunks => {
             const items: SearchResult[] = [];
 
             // no need to sort search result
