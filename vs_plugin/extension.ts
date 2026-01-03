@@ -1,3 +1,5 @@
+// vsce package
+// vsce publish
 import * as vscode from 'vscode';
 import * as dgram from 'dgram';
 import { Buffer } from 'buffer';
@@ -2085,14 +2087,14 @@ button.full-width:hover {
   <button class="toggle-button" id="regexToggle">.*</button>
 </div>
 
-  <input id="fileMask" placeholder="File mask (e.g. *.ts)" />
+  <input id="fileMask" placeholder="File path and mask (e.g. driver/*.h)" />
 <div class="progressBarContainer" id="progressBarContainerText">
   <div id="progressBar"></div>
 </div>  
   <button id="searchTextBtn" class="full-width" onclick="startSearch()">Search text</button>
 
   <br> <br><hr> <br>
-  <input id="fileMask2" placeholder="File mask (e.g. user*)" />
+  <input id="fileMask2" placeholder="File path and mask (e.g. user*)" />
   
 <div class="progressBarContainer" id="progressBarContainer">
   <div id="progressBar"></div>

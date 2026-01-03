@@ -1,12 +1,12 @@
 ## Introduction
 
-**UDP FS** is a Visual Studio Code extension that implements a remote file system using a custom UDP-based protocol. It is designed as an alternative to the "Remote SSH" extension, optimized for **unreliable or high-latency networks** where traditional TCP connections may not be ideal.
+**UDP FS** is a Visual Studio Code extension that implements a remote file system using a custom UDP-based protocol and custom UDP Server. It is designed as an alternative to the "Remote SSH" extension, optimized for **unreliable or high-latency networks** where traditional TCP connections may not be ideal.
 
 ### Key Features
 
+- Requires a custom **UDP server** running on the target machine
 - Uses **UDP** instead of TCP for improved resilience in unstable network conditions  
 - Employs **AES encryption** for secure traffic  
-- Requires a custom **UDP server** running on the target machine
 - Supports **CTAGS** to find function or type definition
 - Unlike SSH connections that might require a "Reload Window" after network interruptions, UDP FS Provider doesn't require it
 
