@@ -2095,10 +2095,10 @@ button.full-width:hover {
 
   <br> <br><hr> <br>
   <input id="fileMask2" placeholder="File path and mask (e.g. user*)" />
-  
 <div class="progressBarContainer" id="progressBarContainer">
   <div id="progressBar"></div>
 </div>
+  <button id="searchFileBtn" class="full-width" onclick="startFileSearch()">Search files</button>
 
   <ul id="fileList"></ul>
 
@@ -2140,20 +2140,30 @@ button.full-width:hover {
     }
 
   const inputFiles = document.getElementById('fileMask2');
-  let debounceTimeout;
+  //let debounceTimeout;
 
-  inputFiles.addEventListener('input', () => {
-    clearTimeout(debounceTimeout); // Reset timer on every keystroke
-
-    debounceTimeout = setTimeout(() => {
-      const fileMask = inputFiles.value;
-      const searchText = '';
-      if (fileMask && fileMask.length > 1) {
+  function startFileSearch() {
+   const fileMask = inputFiles.value;
+   const searchText = '';
+   if (fileMask && fileMask.length > 1) {
          document.getElementById('progressBarContainer').style.display = 'block';
          vscode.postMessage({ command: 'startSearch', searchText, fileMask });
-      }
-    }, 1500); // delay
-  });
+   }
+  }
+
+
+//   inputFiles.addEventListener('input', () => {
+//     clearTimeout(debounceTimeout); // Reset timer on every keystroke
+
+//     debounceTimeout = setTimeout(() => {
+//       const fileMask = inputFiles.value;
+//       const searchText = '';
+//       if (fileMask && fileMask.length > 1) {
+//          document.getElementById('progressBarContainer').style.display = 'block';
+//          vscode.postMessage({ command: 'startSearch', searchText, fileMask });
+//       }
+//     }, 1500); // delay
+//   });
 
 window.addEventListener('message', event => {
     const message = event.data;

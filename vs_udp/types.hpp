@@ -21,14 +21,14 @@ enum PacketType {
 };
 
 enum PacketFlags {
-    LAST_DATA = 0x01, // Indicates that this is the last packet of data
-    ERROR = 0x02,      // Indicates an error occurred
-    FIRST_DATA = 0x04,    // first packet
+    LAST_DATA = 0x01,         // Indicates that this is the last packet of data
+    ERROR = 0x02,             // Indicates an error occurred
+    FIRST_DATA = 0x04,        // first packet
     CASE_SENSITIVE = 0x08,
-    GIT_OLD = 0x08,    // read git old file
+    GIT_OLD = 0x08,           // read git old file
     WHOLE_WORD = 0x10,
     REGEX = 0x20,
-    SEQ_NO = 0x40, // read file and send only missing seq numbers
+    SEQ_NO = 0x40             // read file and send only missing seq numbers
 };
 
 struct packet_hdr {
@@ -75,7 +75,7 @@ private:
 #endif
 
 struct FileEntry {
-    std::string name;
+    std::string name; // name of the file or directory
     int type; // 1 = file, 2 = directory
 };
 

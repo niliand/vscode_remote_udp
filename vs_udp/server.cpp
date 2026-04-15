@@ -66,7 +66,7 @@ std::pair<std::string, std::string> splitPathAndMask(const std::string &input) {
     }
 }
 
-// Helper to convert a wildcard pattern (like *.txt) into a regex
+// Helper to convert a wildcard pattern (like *.txt) into a regex that matches the given pattern.
 std::regex wildcard_to_regex(const std::string &pattern) {
     std::string regex_pattern;
     for (char c : pattern) {
@@ -88,6 +88,7 @@ std::regex wildcard_to_regex(const std::string &pattern) {
     return std::regex(regex_pattern, std::regex::icase);
 }
 
+// Helper to convert a string to lowercase.
 std::string to_lower(const std::string &s) {
     std::string lower = s;
     std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -95,6 +96,7 @@ std::string to_lower(const std::string &s) {
     return lower;
 }
 
+// Search for a text in a file
 void fast_search_in_file(const fs::path &file_path, const char *search_text, bool case_sensitive,
                          bool whole_word, bool regex, std::vector<SearchResult> &results) {
 
@@ -473,6 +475,7 @@ std::vector<std::string> fast_grep_tags(const std::string &filename, const std::
     return matching_lines;
 }
 
+// Function to search for a tag in a file
 std::vector<std::string> grep_tags(const std::string &filename, const std::string &pattern) {
     std::vector<std::string> matching_lines;
     std::ifstream file(filename);
