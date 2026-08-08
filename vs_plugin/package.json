@@ -2,6 +2,8 @@
   "name": "udp-fs-provider",
   "displayName": "Remote - UDP FS Provider",
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
+  "categories": ["Other"],
+  "keywords": ["udp", "filesystem", "remote", "fs", "network"],  
   "version": "0.0.48",
   "icon": "icon.png",
   "license": "MIT",
@@ -101,7 +103,8 @@
         {
           "type": "webview",
           "id": "udpfsSearchView",
-          "name": "Search Files"
+          "name": "Search Files",
+          "icon": "icon.svg"
         }
       ]
     }
