@@ -4,7 +4,7 @@
   "description": "Open any folder on a remote machine using UDP based filesystem provider",
   "categories": ["Other"],
   "keywords": ["udp", "filesystem", "remote", "fs", "network"],  
-  "version": "0.0.48",
+  "version": "0.0.49",
   "icon": "icon.png",
   "license": "MIT",
   "engines": {
@@ -63,7 +63,15 @@
       {
         "command": "udpfsGit.refresh",
         "title": "UDP FS: Refresh Git Status"
-      }
+      },
+      {
+        "command": "udpfs.copyCurrentFilePath",
+        "title": "UDP FS: Copy File Path"
+      },
+      {
+        "command": "udpfs.copyCurrentFileRelativePath",
+        "title": "UDP FS: Copy Relative File Path"
+      }      
     ],
     "configuration": {
       "type": "object",

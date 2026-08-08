@@ -81,7 +81,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 controller.setFolderPath(uri.path)
                 //UdpFileSystemProvider.rootFolder = uri.path;
-                console.log(`#### rootFolder=${controller.getFolderPath()}`);
+                //console.log(`#### rootFolder=${controller.getFolderPath()}`);
 
                 //await vscode.commands.executeCommand("vscode.openFolder", uri);
 
@@ -147,6 +147,44 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'udpfs.copyCurrentFilePath',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+
+            if (!editor) {
+                vscode.window.showWarningMessage('No active file');
+                return;
+            }
+
+            const path = editor.document.uri.fsPath.replace(/\\/g, '/');
+
+            await vscode.env.clipboard.writeText(path);
+
+            vscode.window.showInformationMessage(`Copied: ${path}`);
+        }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'udpfs.copyCurrentFileRelativePath',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+
+            if (!editor) {
+                vscode.window.showWarningMessage('No active file');
+                return;
+            }
+
+            const path = vscode.workspace
+                .asRelativePath(editor.document.uri)
+                .replace(/\\/g, '/');
+
+            await vscode.env.clipboard.writeText(path);
+
+            vscode.window.showInformationMessage(`Copied: ${path}`);
+        }
+    ));
 
     // const savedFavorites = context.globalState.get<string[]>(FAVORITES_KEY, []);
     // for (const uriString of savedFavorites) {
@@ -379,7 +417,7 @@ class UdpFileSystemProvider implements vscode.FileSystemProvider {
         });
 
     }
-    
+
 
     private sendKeepAlive() {
         console.log(`sendKeepAlive: size=${this.HEADER_SIZE}`);
